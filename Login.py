@@ -3,6 +3,7 @@ import sqlite3
 import hashlib
 import datetime
 
+# tried to commit something on line 6
 
 
 # DB connection &setup
