@@ -3,8 +3,19 @@ import sqlite3
 import hashlib
 import datetime
 
-# tried to commit something on line 6
+# -----------------------------
+# ideas for python libraries for:
 
+# machine learning
+# - Scikit-learn
+
+# data visualization
+# - Matplotlib
+
+# debugging
+# - Eli5
+
+# ---------------------------
 
 # DB connection &setup
 def connect_db():
@@ -153,84 +164,135 @@ def registration_window():
 
 
 # -------------- Login Window -------------
-layout = [
 
-    [sg.Text("Welcome to the System", font= ('Helvetica', 16), justification='center')],
-    [sg.Text("Please Log In", font = ('Helvetica', 14), justification= 'center')],
+def login_window():
+    layout = [
 
-    [sg.Text("Username")],
-    [sg.Input(key = '-USERNAME-')],
+        [sg.Text("Welcome to the System", font= ('Helvetica', 16), justification='center')],
+        [sg.Text("Please Log In", font = ('Helvetica', 14), justification= 'center')],
+
+        [sg.Text("Username")],
+        [sg.Input(key = '-USERNAME-')],
     
-    [sg.Text("Password")],
-    [sg.Input(key= '-PASSWORD-', password_char ='*')],
+        [sg.Text("Password")],
+        [sg.Input(key= '-PASSWORD-', password_char ='*')],
 
-    [sg.Button('Login'), sg.Button('Register'),  sg.Button('Cancel')]
-]
-
-
-window = sg.Window('Login Screen', layout)
-
-#loop to process events and get user input
-while True:
-
-    event, values = window.read()
-
-    # If the user closes the window or clicks 'Cancel'
-    if event == sg.WINDOW_CLOSED or event == 'Cancel':
-
-        break
-
-    if event == 'Login':
-
-        username= values['-USERNAME-']
-
-        password =values['-PASSWORD-']
-
-        #check credentials
-        user_record = check_credentials(username, password)
-
-        if user_record:
-
-            sg.popup("Login Successful")
-
-            #Log successful login
-            log_login_attempt(username, 1)
+     [sg.Button('Login'), sg.Button('Register'),  sg.Button('Cancel')]
+    ]
 
 
-            # Get user role and display appropriate message
+    loginwindow = sg.Window('Login Screen', layout)
 
-            role = get_user_role(username)
-            sg.popup(f"Welcome, {username}! You are logged in as {role.capitalize()}.")
+    #loop to process events and get user input
+    while True:
 
-        else:
+        event, values = loginwindow.read()
 
-            sg.popup("Login Failed")
+     # If the user closes the window or clicks 'Cancel'
+        if event == sg.WINDOW_CLOSED or event == 'Cancel':
 
-            # Log failed login attempt
-            log_login_attempt(username, 0)
+            break
 
+        if event == 'Login':
 
-    if event== 'Register':
+            username= values['-USERNAME-']
 
-        reg_window = registration_window()
-        reg_event, reg_values = reg_window.read()
+            password =values['-PASSWORD-']
 
-        if reg_event == 'Register':
+            #check credentials
+            user_record = check_credentials(username, password)
 
-            reg_username = reg_values['-REG_USERNAME-']
-            reg_password = reg_values['-REG_PASSWORD-']
+            if user_record:
 
-            role = reg_values['-ROLE-']
+                sg.popup("Login Successful")
 
-            #Add new user to database
-
-            add_user(reg_username, reg_password, role)
-
-            sg.popup(f"User {reg_username} successfully registered as {role}.")
+                #Log successful login
+                log_login_attempt(username, 1)
 
 
-        reg_window.close()
+                # Get user role and display appropriate message
+
+                role = get_user_role(username)
+                sg.popup(f"Welcome, {username}! You are logged in as {role.capitalize()}.")
+                loginwindow.close()
+                main_menu()
+                break
 
 
-# Close window
-window.close()
+            # insert menu here
+            else:
+
+                sg.popup("Login Failed")
+
+                # Log failed login attempt
+                log_login_attempt(username, 0)
+
+
+        if event== 'Register':
+
+            reg_window = registration_window()
+            reg_event, reg_values = reg_window.read()
+
+            if reg_event == 'Register':
+
+                reg_username = reg_values['-REG_USERNAME-']
+                reg_password = reg_values['-REG_PASSWORD-']
+
+                role = reg_values['-ROLE-']
+
+                #Add new user to database
+
+                add_user(reg_username, reg_password, role)
+
+                sg.popup(f"User {reg_username} successfully registered as {role}.")
+
+
+            reg_window.close()
+
+
+    # Close window
+    loginwindow.close()
+
+
+def main_menu():
+    # Define the layout for the menu window
+    layout = [
+        [sg.Button("Display Board", size=(20, 2))],
+        [sg.Button("Training", size=(20, 2))],
+        [sg.Button("Settings", size=(20, 2))],
+        [sg.Button("Log Out", size=(20, 2))],
+        [sg.Button("Exit", size=(20, 2))]
+    ]
+
+    # Create the window with a title
+    menuwindow = sg.Window("Main Menu", layout)
+
+    # Event loop to process button clicks
+    while True:
+        event, values = menuwindow.read()
+
+        # If user closes window or clicks Exit
+        if event == sg.WIN_CLOSED or event == "Exit":
+            break
+
+        # Handle each button click
+        if event == "Display Board":
+            print("Display Board selected")
+        elif event == "Training":
+            print("Training selected")
+        elif event == "Settings":
+            print("Settings selected")
+        elif event == "Log Out":
+            menuwindow.close()  # Close the main menu window
+            login_window()  # Call the registration window
+            break  # Exit the main loop after logging out
+
+    # Close the window
+    menuwindow.close()
+
+
+# =====================================================================================
+# =====================================================================================
+# main program
+
+login_window()
