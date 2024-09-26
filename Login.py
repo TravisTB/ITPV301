@@ -1,7 +1,12 @@
-import PySimpleGUI as sg
-import sqlite3
-import hashlib
 import datetime
+import hashlib
+import os
+import sqlite3
+import subprocess
+import sys
+
+import PySimpleGUI as sg
+
 
 # -----------------------------
 # ideas for python libraries for:
@@ -255,6 +260,7 @@ def login_window():
 
 
 def main_menu():
+    """Main menu function that allows navigation to different parts of the application."""
     # Define the layout for the menu window
     layout = [
         [sg.Button("Display Board", size=(20, 2))],
@@ -277,22 +283,30 @@ def main_menu():
 
         # Handle each button click
         if event == "Display Board":
-            print("Display Board selected")
+            try:
+                # Get the path to the display_board.py file
+                script_path = os.path.join(os.path.dirname(__file__), "display_board.py")
+
+                # Open the `display_board.py` file using subprocess
+                # Use 'shell=True' to ensure it works in a Windows environment
+                subprocess.Popen([sys.executable, script_path], shell=True)
+            except Exception as e:
+                sg.popup(f"Failed to open the display board: {e}")
         elif event == "Training":
-            print("Training selected")
+            sg.popup("Training selected!")
         elif event == "Settings":
-            print("Settings selected")
+            sg.popup("Settings selected!")
         elif event == "Log Out":
-            menuwindow.close()  # Close the main menu window
-            login_window()  # Call the registration window
-            break  # Exit the main loop after logging out
+            menuwindow.close()
+            # You can call the login window function here if implemented
+            break
 
     # Close the window
     menuwindow.close()
 
-
 # =====================================================================================
 # =====================================================================================
 # main program
+if __name__ == "__main__":
+    login_window()
 
-login_window()
