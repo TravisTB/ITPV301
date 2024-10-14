@@ -264,7 +264,7 @@ def main_menu():
     # Define the layout for the menu window
     layout = [
         [sg.Button("Display Board", size=(20, 2))],
-        [sg.Button("Training", size=(20, 2))],
+        [sg.Button("Configure Engines", size=(20, 2))],
         [sg.Button("Settings", size=(20, 2))],
         [sg.Button("Log Out", size=(20, 2))],
         [sg.Button("Exit", size=(20, 2))]
@@ -292,8 +292,16 @@ def main_menu():
                 subprocess.Popen([sys.executable, script_path], shell=True)
             except Exception as e:
                 sg.popup(f"Failed to open the display board: {e}")
-        elif event == "Training":
-            sg.popup("Training selected!")
+        elif event == "Configure Engines":
+            try:
+                # Get the path to the display_board.py file
+                script_path = os.path.join(os.path.dirname(__file__), "Engine_editor.py")
+
+                # Open the `display_board.py` file using subprocess
+                # Use 'shell=True' to ensure it works in a Windows environment
+                subprocess.Popen([sys.executable, script_path], shell=True)
+            except Exception as e:
+                sg.popup(f"Failed to open Configure Engines: {e}")
         elif event == "Settings":
             sg.popup("Settings selected!")
         elif event == "Log Out":
