@@ -6,4 +6,4 @@ s225876892 - Travis Te Brugge
 s221261052 - Simeon Oosthuizen
 
 
-Prerequisites : Have stockfish exe in main directory
+Prerequisites : Have stockfish exe in stockfish folder
