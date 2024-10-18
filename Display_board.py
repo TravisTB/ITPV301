@@ -158,7 +158,7 @@ def load_game():
 def make_ai_move():
     """Let AI (Stockfish) make a move."""
     try:
-        engine = chess.engine.SimpleEngine.popen_uci("stockfish-windows-x86-64-avx2.exe")  # Replace with your Stockfish path
+        engine = chess.engine.SimpleEngine.popen_uci("chess_engine2222.exe")  # Replace with your Stockfish path
         result = engine.play(board, chess.engine.Limit(time=2.0))
         board.push(result.move)
         engine.quit()
