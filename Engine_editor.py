@@ -117,7 +117,7 @@ while True:
         if model_path:
             try:
                 ai = ChessAI()
-                ai.load_state_dict(torch.load(model_path))
+                ai.load_state_dict(torch.load(model_path, weights_only=True))
                 optimizer = torch.optim.Adam(ai.parameters(), lr=float(values['-LR-']))
                 sg.popup('Model Loaded Successfully')
             except Exception as e:

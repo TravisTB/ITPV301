@@ -1,18 +1,17 @@
 import torch
-import torch.nn as nn
 import chess
 
-class ChessAI(nn.Module):
+class ChessAI(torch.nn.Module):
     def __init__(self):
         super(ChessAI, self).__init__()
-        self.fc1 = nn.Linear(64, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, 1)
+        self.fc1 = torch.nn.Linear(64, 128)
+        self.fc2 = torch.nn.Linear(128, 64)
+        self.fc3 = torch.nn.Linear(64, 1)
 
-    def forward(self, x):
-        x = torch.relu(self.fc1(x))
+    def forward(self, board_tensor):
+        x = torch.relu(self.fc1(board_tensor))
         x = torch.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = torch.sigmoid(self.fc3(x))
         return x
 
 def board_to_tensor(board):
@@ -29,7 +28,8 @@ def board_to_tensor(board):
 
 class UCIChessEngine:
     def __init__(self, model_path):
-        self.model = torch.jit.load(model_path)
+        self.model = ChessAI()  # Initialize the model
+        self.model.load_state_dict(torch.load(model_path,  weights_only=True))  # Load the model's state
         self.model.eval()
 
     def uci_main(self):
@@ -73,7 +73,7 @@ class UCIChessEngine:
         if not legal_moves:
             return chess.Move.null()
 
-        best_move = chess.Move.from_uci("e2e3")
+        best_move = chess.Move.from_uci("e2e3")  # Default move
         best_score = -float('inf')
 
         for move in legal_moves:
@@ -89,6 +89,6 @@ class UCIChessEngine:
         return best_move
 
 if __name__ == '__main__':
-    model_path = 'C:/Users/Simeon/Documents/PyCharm Projects/ITPV301/n1.pt'
+    model_path = '{model_path}'  # Replace with your actual model path
     engine = UCIChessEngine(model_path=model_path)
     engine.uci_main()
