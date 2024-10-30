@@ -2,8 +2,7 @@ import os
 import PySimpleGUI as sg
 import torch
 import subprocess
-import chess
-import chess.engine
+
 
 # Simple PyTorch Neural Network for Chess (Placeholder)
 class ChessAI(torch.nn.Module):
@@ -19,28 +18,21 @@ class ChessAI(torch.nn.Module):
         x = torch.sigmoid(self.fc3(x))
         return x
 
+
 # Function to compile AI to a UCI-compatible engine and save as .exe
 def compile_model_to_exe(scripted_model_path, output_name="chess_engine"):
     try:
-        # Read the chess engine template
         with open('chess_engine_template.py', 'r') as template_file:
             wrapper_content = template_file.read()
 
-        # Replace the placeholder with the actual scripted model path
         wrapper_content = wrapper_content.replace('{model_path}', scripted_model_path)
-
-        # Save the modified wrapper as a new Python file
         wrapper_script_path = f"{output_name}.py"
         with open(wrapper_script_path, 'w') as wrapper_script_file:
             wrapper_script_file.write(wrapper_content)
 
-        # Ensure full paths are provided to PyInstaller
         script_full_path = os.path.abspath(wrapper_script_path)
-
-        # Run PyInstaller to compile the Python script into a .exe
         subprocess.run(["pyinstaller", "--onefile", script_full_path])
 
-        # Remove the generated .py and .spec files after compilation
         if os.path.exists(wrapper_script_path):
             os.remove(wrapper_script_path)
         spec_file = f"{output_name}.spec"
@@ -52,8 +44,10 @@ def compile_model_to_exe(scripted_model_path, output_name="chess_engine"):
     except Exception as e:
         sg.popup_error(f"Error during compilation: {e}")
 
+
 def open_neural_network_window(ai):
     layout = [
+        [sg.Text('Learning Rate'), sg.InputText('0.001', key='-LR-', size=(10, 1))],
         [sg.Text('Random Training', font=('Helvetica', 14))],
         [sg.Button('Random Training', key='-RANDOM-TRAINING-')],
         [sg.Text('Export AI Model', font=('Helvetica', 14))],
@@ -68,11 +62,11 @@ def open_neural_network_window(ai):
         if event == sg.WINDOW_CLOSED:
             break
         if event == '-RANDOM-TRAINING-':
-            # Placeholder: Implement your random training logic here
             print('Random training in progress...')
         if event == '-EXPORT-AI-':
             if ai is not None:
-                save_path = sg.popup_get_file('Save AI Model', save_as=True, default_extension='.pt', file_types=(("Model Files", "*.pt"), ("All Files", "*.*")))
+                save_path = sg.popup_get_file('Save AI Model', save_as=True, default_extension='.pt',
+                                              file_types=(("Model Files", "*.pt"), ("All Files", "*.*")))
                 if save_path:
                     if not save_path.endswith('.pt'):
                         save_path += '.pt'
@@ -83,27 +77,30 @@ def open_neural_network_window(ai):
 
     window.close()
 
+
 # GUI layout
 layout = [
     [sg.Text('Chess AI Configuration', font=('Helvetica', 16))],
-    [sg.Text('Learning Rate'), sg.InputText('0.001', key='-LR-', size=(10, 1))],
-    [sg.Text('Load AI Model'), sg.InputText('', key='-MODEL-', size=(30, 1)), sg.FileBrowse(file_types=(("Model Files", "*.pt"), ("All Files", "*.*")))],
-    [sg.Button('Load AI', key='-LOAD-')],
+    [sg.Text('Load AI Model'), sg.InputText('', key='-MODEL-', size=(30, 1)),
+     sg.FileBrowse(file_types=(("Model Files", "*.pt"), ("All Files", "*.*")), key='-LOAD-BROWSE-')],
+    [sg.Button('Load Model', key='-LOAD-')],
     [sg.Button('Create Model', key='-CREATE-')],
-    [sg.Text('Select Stockfish Engine'), sg.InputText('', key='-STOCKFISH-', size=(30, 1)), sg.FileBrowse(file_types=(("Executable Files", "*.exe"), ("All Files", "*.*")))],
-    [sg.Button('Set Stockfish Path', key='-SET-STOCKFISH-')],
+    [sg.Text('Select Stockfish Engine'), sg.InputText('', key='-STOCKFISH-', size=(30, 1)),
+     sg.FileBrowse(file_types=(("Executable Files", "*.exe"), ("All Files", "*.*")), key='-STOCKFISH-BROWSE-')],
     [sg.Button('Compile AI Model to Engine', key='-COMPILE-')],
-    [sg.Button('Neural Networks', key='-NEURAL-NETWORK-')],
+    [sg.Button('Edit Model', key='-NEURAL-NETWORK-')],
     [sg.Output(size=(60, 5), key='-MAIN-OUTPUT-')]
 ]
 
 window = sg.Window('Chess AI Trainer', layout)
+models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+os.makedirs(models_dir, exist_ok=True)
 
 # Initialize AI and Stockfish engine path
 ai = None
 optimizer = None
-engine_path = None  # Set as None initially
-
+engine_path = None
+default_learn_rate = 0.001
 # Main event loop
 while True:
     event, values = window.read()
@@ -118,7 +115,7 @@ while True:
             try:
                 ai = ChessAI()
                 ai.load_state_dict(torch.load(model_path, weights_only=True))
-                optimizer = torch.optim.Adam(ai.parameters(), lr=float(values['-LR-']))
+                optimizer = torch.optim.Adam(ai.parameters(), lr=default_learn_rate)
                 sg.popup('Model Loaded Successfully')
             except Exception as e:
                 sg.popup(f"Error loading model: {e}")
@@ -126,19 +123,31 @@ while True:
     # Create new AI model and save to file
     if event == '-CREATE-':
         try:
-            ai = ChessAI()
-            optimizer = torch.optim.Adam(ai.parameters(), lr=float(values['-LR-']))
-            save_path = sg.popup_get_file('Save Model', save_as=True, default_extension='.pt', file_types=(("Model Files", "*.pt"), ("All Files", "*.*")))
-            if save_path:
-                if not save_path.endswith('.pt'):
-                    save_path += '.pt'
-                torch.save(ai.state_dict(), save_path)
-                sg.popup(f"New model created and saved successfully to {save_path}")
+            ai = ChessAI()  # Instantiate a new AI model
+            optimizer = torch.optim.Adam(ai.parameters(), lr=default_learn_rate ) # Set a default learning rate
+
+            # Prompt for filename
+            model_name = 'new_model.pt'
+            if model_name:
+                save_path = sg.popup_get_file(
+                    'Save Model As',
+                    save_as=True,
+                    default_path=model_name,
+                    initial_folder=models_dir,
+                    no_window=True,
+                    default_extension='.pt',
+                    file_types=(("Model Files", "*.pt"), ("All Files", "*.*"))
+                )
+                if save_path:
+                    if not save_path.endswith('.pt'):
+                        save_path += '.pt'
+                    torch.save(ai.state_dict(), save_path)
+                    sg.popup(f"New model '{model_name}' created and saved successfully to {save_path}")
         except Exception as e:
             sg.popup(f"Error creating or saving model: {e}")
 
     # Set Stockfish engine path
-    if event == '-SET-STOCKFISH-':
+    if event == '-STOCKFISH-BROWSE-':
         engine_path = values['-STOCKFISH-']
         if engine_path:
             sg.popup(f"Stockfish engine path set to: {engine_path}")
@@ -159,6 +168,3 @@ while True:
         open_neural_network_window(ai)
 
 window.close()
-
-
-
