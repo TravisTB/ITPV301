@@ -1,0 +1,1 @@
+copy stockfish from downloads and place it here
