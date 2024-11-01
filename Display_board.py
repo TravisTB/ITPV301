@@ -10,7 +10,7 @@ pygame.init()
 SQUARE_SIZE = 60
 BOARD_SIZE = 8
 SCREEN_WIDTH = BOARD_SIZE * SQUARE_SIZE
-SCREEN_HEIGHT = BOARD_SIZE * SQUARE_SIZE + 100  # Extra space for buttons
+SCREEN_HEIGHT = BOARD_SIZE * SQUARE_SIZE + 100  # Extra space for buttons and timer
 DEFAULT_BG_COLOR = '#323232'
 WHITE = (255, 255, 255)
 DARK_AQUA = (0, 139, 139)
@@ -38,29 +38,33 @@ piece_images = {
     'k': pygame.image.load('pieces/black-king.png').convert_alpha(),
 }
 
-# Define button colors
+
+#button colours
 BUTTON_COLOR = (200, 200, 200)
 BUTTON_TEXT_COLOR = (0, 0, 0)
 
-# Function to draw the board
+
+#Timer setup
+start_time = time.time()
+
+#Function to draw the board
 def draw_board(selected_square=None, legal_moves=[]):
     screen.fill(DEFAULT_BG_COLOR)
 
     for row in range(BOARD_SIZE):
-
         for col in range(BOARD_SIZE):
             color = WHITE if (row + col) % 2 == 0 else DARK_AQUA
             square_rect = pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
 
             # Highlight selected square
-            if selected_square is not None and selected_square == chess.square(col, row):
+            if selected_square is not None and selected_square == chess.square(col, 7 - row):
                 color = (255, 255, 0)  # Yellow for selected piece
 
             pygame.draw.rect(screen, color, square_rect)
 
             # Highlight legal moves for the selected piece
             for move in legal_moves:
-                if move.to_square == chess.square(col, row):
+                if move.to_square == chess.square(col, 7 - row):
                     pygame.draw.circle(screen, (0, 255, 0),  # Green circle for legal moves
                                        (col * SQUARE_SIZE + SQUARE_SIZE // 2, row * SQUARE_SIZE + SQUARE_SIZE // 2), 10)
 
@@ -86,9 +90,20 @@ def draw_buttons():
     ]
     for text, pos in buttons:
         pygame.draw.rect(screen, BUTTON_COLOR, (*pos, 100, 40))
-        font = pygame.font.Font(None, 24)
+        font = pygame.font.Font(None, 22)
         label = font.render(text, True, BUTTON_TEXT_COLOR)
-        screen.blit(label, (pos[0] + 10, pos[1] + 10))
+        screen.blit(label, (pos[0] + 8, pos[1] + 10))
+
+
+# Function to draw timer
+def draw_timer():
+    elapsed = time.time() - start_time
+    minutes, seconds = divmod(elapsed, 60)
+    timer_text = f"Time: {int(minutes):02d}:{int(seconds):02d}"
+    font = pygame.font.Font(None, 25)
+    timer_surface = font.render(timer_text, True, (255, 255, 255))
+    screen.blit(timer_surface, (SCREEN_WIDTH - 475, 550))
+
 
 # Get legal moves for the selected piece
 def get_legal_moves(selected_square):
@@ -100,7 +115,7 @@ def get_legal_moves(selected_square):
 
 # Handle square selection and moves
 def handle_click(position, selected_square):
-    col, row = position[0] // SQUARE_SIZE, 7 - (position[1] // SQUARE_SIZE)
+    col, row = position[0] // SQUARE_SIZE, 7- (position[1] // SQUARE_SIZE)
     clicked_square = chess.square(col, row)
     piece = board.piece_at(clicked_square)
 
@@ -186,6 +201,7 @@ def main():
         draw_board(selected_square, legal_moves)
         draw_pieces()
         draw_buttons()
+        draw_timer()  # Draw the timer
         pygame.display.flip()
 
         for event in pygame.event.get():
