@@ -1,8 +1,7 @@
-import PySimpleGUI as sg
 import pygame
 import chess
+import chess.engine
 import time
-import chess.engine  # For AI integration (Stockfish)
 
 # Initialize pygame
 pygame.init()
@@ -11,7 +10,7 @@ pygame.init()
 SQUARE_SIZE = 60
 BOARD_SIZE = 8
 SCREEN_WIDTH = BOARD_SIZE * SQUARE_SIZE
-SCREEN_HEIGHT = BOARD_SIZE * SQUARE_SIZE
+SCREEN_HEIGHT = BOARD_SIZE * SQUARE_SIZE + 100  # Extra space for buttons
 DEFAULT_BG_COLOR = '#323232'
 WHITE = (255, 255, 255)
 DARK_AQUA = (0, 139, 139)
@@ -23,230 +22,185 @@ board = chess.Board()
 pygame.display.set_caption("Interactive Chessboard")
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 
-# Timer setup
-start_time = time.time()
+# Load piece images
+piece_images = {
+    'P': pygame.image.load('pieces/white-pawn.png').convert_alpha(),
+    'N': pygame.image.load('pieces/white-knight.png').convert_alpha(),
+    'B': pygame.image.load('pieces/white-bishop.png').convert_alpha(),
+    'R': pygame.image.load('pieces/white-rook.png').convert_alpha(),
+    'Q': pygame.image.load('pieces/white-queen.png').convert_alpha(),
+    'K': pygame.image.load('pieces/white-king.png').convert_alpha(),
+    'p': pygame.image.load('pieces/black-pawn.png').convert_alpha(),
+    'n': pygame.image.load('pieces/black-knight.png').convert_alpha(),
+    'b': pygame.image.load('pieces/black-bishop.png').convert_alpha(),
+    'r': pygame.image.load('pieces/black-rook.png').convert_alpha(),
+    'q': pygame.image.load('pieces/black-queen.png').convert_alpha(),
+    'k': pygame.image.load('pieces/black-king.png').convert_alpha(),
+}
 
+# Define button colors
+BUTTON_COLOR = (200, 200, 200)
+BUTTON_TEXT_COLOR = (0, 0, 0)
 
-def update_timer():
-    """Update the timer showing how long the current player has taken."""
-    elapsed = time.time() - start_time
-    minutes, seconds = divmod(elapsed, 60)
-    return f"{int(minutes)}:{int(seconds):02d}"
+# Function to draw the board
+def draw_board(selected_square=None, legal_moves=[]):
+    screen.fill(DEFAULT_BG_COLOR)
 
-
-def draw_chessboard(selected_square=None):
-    """Draws a chessboard using pygame and returns the surface."""
-    board_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
-    board_surface.fill(DEFAULT_BG_COLOR)
-
-    # Draw squares
     for row in range(BOARD_SIZE):
+
         for col in range(BOARD_SIZE):
             color = WHITE if (row + col) % 2 == 0 else DARK_AQUA
-            square = chess.square(col, row)
+            square_rect = pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
 
             # Highlight selected square
-            if selected_square == square:
-                color = (255, 255, 0)  # Yellow color for selected square
+            if selected_square is not None and selected_square == chess.square(col, row):
+                color = (255, 255, 0)  # Yellow for selected piece
 
-            pygame.draw.rect(board_surface, color,
-                             pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE))
+            pygame.draw.rect(screen, color, square_rect)
 
-    return board_surface
+            # Highlight legal moves for the selected piece
+            for move in legal_moves:
+                if move.to_square == chess.square(col, row):
+                    pygame.draw.circle(screen, (0, 255, 0),  # Green circle for legal moves
+                                       (col * SQUARE_SIZE + SQUARE_SIZE // 2, row * SQUARE_SIZE + SQUARE_SIZE // 2), 10)
 
-
-def draw_legal_moves(surface, selected_square):
-    """Highlight legal moves for the selected piece."""
-    if selected_square:
-        legal_moves = [move for move in board.legal_moves if move.from_square == selected_square]
-
-        for move in legal_moves:
-            row, col = divmod(move.to_square, 8)
-            pygame.draw.circle(surface, (0, 255, 0),  # Green color for legal moves
-                               (col * SQUARE_SIZE + SQUARE_SIZE // 2, row * SQUARE_SIZE + SQUARE_SIZE // 2), 10)
-
-
-def draw_pieces(surface):
-    """Draws pieces on the board according to the current state with improved quality."""
-    piece_images = {
-        'P': pygame.image.load('pieces/white-pawn.png').convert_alpha(),
-        'N': pygame.image.load('pieces/white-knight.png').convert_alpha(),
-        'B': pygame.image.load('pieces/white-bishop.png').convert_alpha(),
-        'R': pygame.image.load('pieces/white-rook.png').convert_alpha(),
-        'Q': pygame.image.load('pieces/white-queen.png').convert_alpha(),
-        'K': pygame.image.load('pieces/white-king.png').convert_alpha(),
-        'p': pygame.image.load('pieces/black-pawn.png').convert_alpha(),
-        'n': pygame.image.load('pieces/black-knight.png').convert_alpha(),
-        'b': pygame.image.load('pieces/black-bishop.png').convert_alpha(),
-        'r': pygame.image.load('pieces/black-rook.png').convert_alpha(),
-        'q': pygame.image.load('pieces/black-queen.png').convert_alpha(),
-        'k': pygame.image.load('pieces/black-king.png').convert_alpha(),
-    }
-
+# Function to draw pieces on the board
+def draw_pieces():
     for square in chess.SQUARES:
         piece = board.piece_at(square)
-        for square in chess.SQUARES:
-            piece = board.piece_at(square)
-            if piece:
-                piece_image = piece_images[piece.symbol()]
+        if piece:
+            piece_image = piece_images[piece.symbol()]
+            piece_image = pygame.transform.scale(piece_image, (SQUARE_SIZE, SQUARE_SIZE))
+            row, col = divmod(square, 8)
+            row = 7 - row  # Adjust for board orientation
+            screen.blit(piece_image, (col * SQUARE_SIZE, row * SQUARE_SIZE))
 
-                # Scale the piece to fit within the square with anti-aliasing
-                piece_image = pygame.transform.scale(piece_image, (SQUARE_SIZE, SQUARE_SIZE))
+# Draw buttons
+def draw_buttons():
+    buttons = [
+        ("Undo Move", (10, SCREEN_HEIGHT - 90)),
+        ("Move History", (130, SCREEN_HEIGHT - 90)),
+        ("Save Game", (250, SCREEN_HEIGHT - 90)),
+        ("Load Game", (370, SCREEN_HEIGHT - 90)),
+        ("AI Move", (490, SCREEN_HEIGHT - 90))
+    ]
+    for text, pos in buttons:
+        pygame.draw.rect(screen, BUTTON_COLOR, (*pos, 100, 40))
+        font = pygame.font.Font(None, 24)
+        label = font.render(text, True, BUTTON_TEXT_COLOR)
+        screen.blit(label, (pos[0] + 10, pos[1] + 10))
 
-                # Reverse the row order
-                row, col = divmod(square, 8)
-                row = 7 - row  # This reverses the rows so the board starts from the bottom
+# Get legal moves for the selected piece
+def get_legal_moves(selected_square):
+    """Retrieve legal moves only for the piece at the selected square."""
+    if selected_square is None:
+        return []
+    # Only return moves for the piece at the selected square
+    return [move for move in board.legal_moves if move.from_square == selected_square]
 
-                # Draw the piece at the adjusted position
-                surface.blit(piece_image, (col * SQUARE_SIZE, row * SQUARE_SIZE))
+# Handle square selection and moves
+def handle_click(position, selected_square):
+    col, row = position[0] // SQUARE_SIZE, 7 - (position[1] // SQUARE_SIZE)
+    clicked_square = chess.square(col, row)
+    piece = board.piece_at(clicked_square)
 
+    # First click: select a piece if it matches the turn
+    if selected_square is None:
+        if piece and piece.color == board.turn:
+            return clicked_square
+    # Second click: attempt to move the selected piece
+    else:
+        move = chess.Move(selected_square, clicked_square)
+        if move in board.legal_moves:
+            board.push(move)
+            check_for_game_end()
+        return None  # Reset selection after move
+    return selected_square  # Keep selection if no move is made
 
-def get_square_from_mouse(pos):
-    """Get the square index from the mouse position."""
-    x, y = pos
-    col = x // SQUARE_SIZE
-    row = y // SQUARE_SIZE
-    return chess.square(col, row)
-
-
-# Undo Move Feature
+# Undo last move
 def undo_last_move():
-    """Undo the last move made on the board."""
-    if board.move_stack:  # Check if there are any moves to undo
-        last_move = board.pop()  # Undo the last move
+    if board.move_stack:
+        last_move = board.pop()
         print(f"Undid move: {last_move}")
 
-
-# Move History Feature
+# Display move history
 def display_move_history():
-    """Display the history of moves made in the game."""
-    try:
-        if board.move_stack:
-            move_history = []
-            for move in board.move_stack:
-                try:
-                    move_history.append(board.san(move))  # Convert to SAN if legal
-                except AssertionError:
-                    move_history.append(str(move))  # Fallback: use LAN (e.g., 'e2e4') if SAN fails
-            sg.popup("Move History", "\n".join(move_history))
-        else:
-            sg.popup("No moves made yet!")
-    except Exception as e:
-        sg.popup(f"Error displaying move history: {str(e)}")
+    if board.move_stack:
+        move_history = [board.san(move) for move in board.move_stack]
+        print("Move History:", " ".join(move_history))
 
-# Save and Load Game Features
+# Save and load game
 def save_game():
-    """Save the current board state to a file."""
-    fen = board.fen()
     with open("saved_game.fen", "w") as file:
-        file.write(fen)
-    sg.popup("Game Saved")
-
+        file.write(board.fen())
+    print("Game Saved")
 
 def load_game():
-    """Load a saved game from a file."""
     try:
         with open("saved_game.fen", "r") as file:
             fen = file.read()
             board.set_fen(fen)
-        sg.popup("Game Loaded")
+        print("Game Loaded")
     except FileNotFoundError:
-        sg.popup("No saved game found.")
+        print("No saved game found.")
 
-
-# AI Integration Feature (using Stockfish)
+# AI Move using Stockfish
 def make_ai_move():
-    """Let AI (Stockfish) make a move."""
     try:
-        engine = chess.engine.SimpleEngine.popen_uci("dist/try32.exe")  # Replace with your Stockfish path
+        engine = chess.engine.SimpleEngine.popen_uci("path/to/stockfish")  # Update with your Stockfish path
         result = engine.play(board, chess.engine.Limit(time=2.0))
         board.push(result.move)
         engine.quit()
     except FileNotFoundError:
-        sg.popup("AI engine (Stockfish) not found!")
+        print("Stockfish engine not found")
 
+# Check for checkmate, stalemate, and check
+def check_for_game_end():
+    if board.is_checkmate():
+        print("Checkmate! Game over.")
+    elif board.is_stalemate():
+        print("Stalemate! Game over.")
+    elif board.is_check():
+        print("Check!")
 
-# Main function
+# Detect button clicks
+def handle_button_click(pos):
+    x, y = pos
+    if 10 <= x <= 110 and SCREEN_HEIGHT - 90 <= y <= SCREEN_HEIGHT - 50:
+        undo_last_move()
+    elif 130 <= x <= 230 and SCREEN_HEIGHT - 90 <= y <= SCREEN_HEIGHT - 50:
+        display_move_history()
+    elif 250 <= x <= 350 and SCREEN_HEIGHT - 90 <= y <= SCREEN_HEIGHT - 50:
+        save_game()
+    elif 370 <= x <= 470 and SCREEN_HEIGHT - 90 <= y <= SCREEN_HEIGHT - 50:
+        load_game()
+    elif 490 <= x <= 590 and SCREEN_HEIGHT - 90 <= y <= SCREEN_HEIGHT - 50:
+        make_ai_move()
+
+# Main loop
 def main():
-    layout = [
-        [sg.Text('', key='-TIMER-')],  # Timer display
-        [sg.Image(filename='', key='-BOARD-')],
-        [sg.Button('Undo Move'), sg.Button('Move History'), sg.Button('Save Game'), sg.Button('Load Game')],
-        [sg.Button('AI Move')]
-    ]
+    selected_square = None
+    running = True
+    while running:
+        legal_moves = get_legal_moves(selected_square)
+        draw_board(selected_square, legal_moves)
+        draw_pieces()
+        draw_buttons()
+        pygame.display.flip()
 
-    window = sg.Window("Interactive Chessboard", layout, finalize=True)
-
-    selected_square = None  # To track the selected piece
-
-    while True:
-        event, values = window.read(timeout=100)
-
-        if event in (sg.WIN_CLOSED, 'Exit'):
-            break
-
-        # Update the timer
-        window['-TIMER-'].update(update_timer())
-
-        # Draw the board
-        board_surface = draw_chessboard(selected_square)
-        draw_pieces(board_surface)
-
-        # Highlight legal moves for the selected piece
-        if selected_square:
-            draw_legal_moves(board_surface, selected_square)
-
-        # Save the board surface to a temporary file to display in PySimpleGUI
-        pygame.image.save(board_surface, "chessboard.png")
-        window['-BOARD-'].update(filename="chessboard.png")
-
-        # Handle mouse clicks
-        if event == '-BOARD-':
-            mouse_pos = values['-BOARD-']
-            if mouse_pos:
-                square = get_square_from_mouse(mouse_pos)
-
-                # If no piece is selected, select the clicked square if a piece exists
-                if selected_square is None:
-                    if board.piece_at(square):  # Check if there's a piece at the square
-                        selected_square = square  # Select the piece
-                        print(f"Selected {chess.square_name(square)}")
-
-                # If a piece is selected, try to move it
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                pos = pygame.mouse.get_pos()
+                # Check if a button was clicked
+                if pos[1] >= SCREEN_HEIGHT - 100:
+                    handle_button_click(pos)
                 else:
-                    move = chess.Move(selected_square, square)
-                    if move in board.legal_moves:
-                        board.push(move)  # Make the move on the board
-                        print(f"Moved piece to {chess.square_name(square)}")
+                    # Otherwise, handle board click
+                    selected_square = handle_click(pos, selected_square)
 
-                        # Checkmate/Check Detection Feature
-                        if board.is_checkmate():
-                            sg.popup("Checkmate! Game over.")
-                        elif board.is_stalemate():
-                            sg.popup("Stalemate! Game over.")
-                        elif board.is_check():
-                            sg.popup("Check!")
-
-                    else:
-                        print(f"Invalid move from {chess.square_name(selected_square)} to {chess.square_name(square)}")
-
-                    selected_square = None  # Reset the selection
-
-        # Handle extra features (Undo, History, Save/Load, AI Move)
-        if event == 'Undo Move':
-            undo_last_move()
-        elif event == 'Move History':
-            display_move_history()
-        elif event == 'Save Game':
-            save_game()
-        elif event == 'Load Game':
-            load_game()
-        elif event == 'AI Move':
-            make_ai_move()
-
-    window.close()
     pygame.quit()
-
 
 if __name__ == "__main__":
     main()
