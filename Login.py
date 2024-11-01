@@ -1,5 +1,6 @@
 import datetime
 import hashlib
+import json
 import os
 import sqlite3
 import subprocess
@@ -16,6 +17,37 @@ import PySimpleGUI as sg
 # debugging
 # - Eli5
 # ---------------------------
+
+# Default theme
+theme = {
+    "light_square": (255, 255, 255),  # White
+    "dark_square": (0, 139, 139),     # Dark Aqua
+    "highlight_square": (255, 255, 0), # Yellow
+    "legal_move_highlight": (0, 255, 0) # Green
+}
+
+def load_theme():
+    global theme
+    try:
+        with open("theme.json", "r") as file:
+            theme = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        save_theme()
+
+def save_theme():
+    with open("theme.json", "w") as file:
+        json.dump(theme, file)
+
+def update_theme(theme_choice):
+    global theme
+    themes = {
+        "Classic": {"light square": (255, 255, 255), "dark square": (0, 139, 139)},
+        "Wood": {"light square": (222, 184, 135), "dark square": (139, 69, 19)},
+        "Dark Mode": {"light square": (169, 169, 169), "dark_square": (105, 105, 105)}
+    }
+    selected_theme = themes.get(theme_choice, themes["Classic"])
+    theme.update(selected_theme)
+    save_theme()
 
 # DB connection & setup
 def connect_db():
@@ -240,8 +272,8 @@ def delete_user_window():
 def settings_screen(username):
     layout = [
         [sg.Text("Settings", font=("Helvetica", 16))],
-        [sg.Button("Change Password")],
-        [sg.Button("Back")]
+        [sg.Text("Choose Board Theme"), sg.Combo(["Classic", "Wood", "Dark Mode"], default_value="Classic", key="-THEME-")],
+        [sg.Button("Save Theme"), sg.Button("Change Password"), sg.Button("Back")]
     ]
 
     window = sg.Window("Settings", layout)
@@ -250,6 +282,11 @@ def settings_screen(username):
         event, values = window.read()
         if event in (sg.WIN_CLOSED, "Back"):
             break
+
+        elif event == "Save Theme":
+            selected_theme = values["-THEME-"]
+            update_theme(selected_theme)
+            sg.popup(f"Theme updated to {selected_theme}")
 
         elif event == "Change Password":
             change_password_window(username)
