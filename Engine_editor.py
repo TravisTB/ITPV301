@@ -5,22 +5,52 @@ import subprocess
 import sqlite3
 import datetime
 
+from torch import nn
+
+
 # Simple PyTorch Neural Network for Chess (Placeholder)
 class ChessAI(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, input_size=64, hidden_layer_sizes=[128, 64], output_size=1):
         super(ChessAI, self).__init__()
-        self.fc1 = torch.nn.Linear(64, 128)
-        self.fc2 = torch.nn.Linear(128, 64)
-        self.fc3 = torch.nn.Linear(64, 1)
+        # Initialize layers based on default sizes
+        self.layers = torch.nn.ModuleList()
+
+        # Set up the layers according to the provided layer sizes
+        in_features = input_size
+        for hidden_size in hidden_layer_sizes:
+            self.layers.append(torch.nn.Linear(in_features, hidden_size))
+            in_features = hidden_size  # Update in_features for the next layer
+
+        # Add the final output layer
+        self.layers.append(torch.nn.Linear(in_features, output_size))
 
     def forward(self, board_tensor):
-        x = torch.relu(self.fc1(board_tensor))
-        x = torch.relu(self.fc2(x))
-        x = torch.sigmoid(self.fc3(x))
+        x = board_tensor
+        for layer in self.layers[:-1]:  # Apply activation to all layers except the last one
+            x = torch.relu(layer(x))
+        x = torch.sigmoid(self.layers[-1](x))  # Use sigmoid for the output layer
         return x
 
+    # Method to dynamically configure layers based on the state_dict
+    def configure_layers(self, state_dict):
+        # Extract layer shapes from 2D tensors in state_dict
+        layer_sizes = [param.shape for param in state_dict.values() if param.ndim == 2]
 
+        # Ensure we have valid layer sizes to configure
+        if not layer_sizes:
+            raise ValueError("No valid layer sizes inferred from state_dict.")
 
+        # Clear existing layers and reinitialize as a ModuleList
+        self.layers = torch.nn.ModuleList()
+
+        # Configure each layer based on the inferred sizes
+        in_features = layer_sizes[0][1]  # Input size from the first layer
+        for out_features in [size[0] for size in layer_sizes]:
+            self.layers.append(torch.nn.Linear(in_features, out_features))
+            in_features = out_features  # Update in_features for the next layer
+
+        # Load the model weights into the configured layers
+        self.load_state_dict(state_dict)
 # Database setup
 def create_database():
     connection = sqlite3.connect("chess_ai_training.db")
@@ -272,6 +302,14 @@ import PySimpleGUI as sg
 import torch
 import time
 
+
+def load_chess_ai(model_path):
+    checkpoint = torch.load(model_path)
+    model = ChessAI()
+    model.configure_layers(checkpoint["model_state_dict"])  # Configure layers from weights
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    return model
 def open_training_window(ai):
     layout = [
         [sg.Text('Training Configuration', font=('Helvetica', 16))],
@@ -479,20 +517,58 @@ def train_model(model, dataset, optimizer, criterion, epochs, batch_size, dropou
     print("Training model with configured parameters...")
     # Placeholder: Implement training loop here
     pass
-def open_neural_network_window(ai):
+
+
+import torch.nn as nn
+import PySimpleGUI as sg
+
+import torch.nn as nn
+import PySimpleGUI as sg
+
+
+def open_neural_network_window(ai, model_path):
+    # Load existing model configuration if the file exists, with weights_only=True
+    try:
+        checkpoint = torch.load(model_path, weights_only=True)
+        ai.configure_layers(checkpoint['model_state_dict'])
+        # Map the saved activation function string to the actual function
+        activation_func_name = checkpoint['activation_func']
+        if activation_func_name == 'ReLU':
+            ai.activation_func = nn.ReLU()
+        elif activation_func_name == 'LeakyReLU':
+            ai.activation_func = nn.LeakyReLU()
+        elif activation_func_name == 'Tanh':
+            ai.activation_func = nn.Tanh()
+        elif activation_func_name == 'Sigmoid':
+            ai.activation_func = nn.Sigmoid()
+        print(f"Model configuration loaded successfully from {model_path}.")
+    except (FileNotFoundError, KeyError):
+        print("No previous model configuration file found or invalid format. Using default configuration.")
+
+    # Extract current configuration values from `ai`
+    input_layer_size = ai.layers[0].in_features if ai.layers else 64
+    output_layer_size = ai.layers[-1].out_features if ai.layers else 1
+    hidden_layer_sizes = [layer.out_features for layer in ai.layers[1:-1] if isinstance(layer, nn.Linear)]
+    num_hidden_layers = len(hidden_layer_sizes)
+    hidden_layer_size = hidden_layer_sizes[0] if hidden_layer_sizes else 64  # Default if no hidden layers
+
+    # Extract activation function and dropout status
+    activation_func = getattr(ai.activation_func, '__class__', nn.ReLU).__name__
+    add_dropout = any(isinstance(layer, nn.Dropout) for layer in ai.layers)
+
+    # Create GUI layout with fetched values
     layout = [
         [sg.Text('Neural Network Configuration', font=('Helvetica', 16))],
-
-        # Model Architecture Settings
-        [sg.Text('Number of Layers'), sg.InputText('3', key='-NUM-LAYERS-', size=(10, 1))],
-        [sg.Text('Neurons in Layer 1'), sg.InputText('128', key='-LAYER1-SIZE-', size=(10, 1))],
-        [sg.Text('Neurons in Layer 2'), sg.InputText('64', key='-LAYER2-SIZE-', size=(10, 1))],
-        [sg.Text('Neurons in Layer 3'), sg.InputText('1', key='-LAYER3-SIZE-', size=(10, 1))],
-
+        [sg.Text('Neurons in Input Layer'),
+         sg.InputText(input_layer_size, key='-INPUT-LAYER-', size=(10, 1), readonly=True)],
+        [sg.Text('Number of Hidden Layers'), sg.InputText(num_hidden_layers, key='-NUM-HIDDEN-LAYERS-', size=(10, 1))],
+        [sg.Text('Neurons per Hidden Layer'), sg.InputText(hidden_layer_size, key='-HIDDEN-LAYER-SIZE-', size=(10, 1))],
+        [sg.Text('Neurons in Output Layer'),
+         sg.InputText(output_layer_size, key='-OUTPUT-LAYER-', size=(10, 1), readonly=True)],
         [sg.Text('Activation Function'),
-         sg.Combo(['ReLU', 'LeakyReLU', 'Tanh', 'Sigmoid'], default_value='ReLU', key='-ACTIVATION-', size=(10, 1))],
-
-        [sg.Checkbox('Add Dropout Layer (20%)', key='-DROPOUT-')],
+         sg.Combo(['ReLU', 'LeakyReLU', 'Tanh', 'Sigmoid'], default_value=activation_func, key='-ACTIVATION-',
+                  size=(10, 1))],
+        [sg.Checkbox('Add Dropout Layer (20%)', key='-DROPOUT-', default=add_dropout)],
 
         # Control Buttons
         [sg.Button('Save Configurations', key='-SAVE-')],
@@ -509,41 +585,64 @@ def open_neural_network_window(ai):
 
         if event == '-SAVE-':
             try:
-                # Update AI model parameters based on user input
-                num_layers = int(values['-NUM-LAYERS-'])
-                layer1_size = int(values['-LAYER1-SIZE-'])
-                layer2_size = int(values['-LAYER2-SIZE-'])
-                layer3_size = int(values['-LAYER3-SIZE-'])
+                # Get parameters from the user input
+                num_hidden_layers = int(values['-NUM-HIDDEN-LAYERS-'])
+                input_layer_size = int(values['-INPUT-LAYER-'])
+                hidden_layer_size = int(values['-HIDDEN-LAYER-SIZE-'])
+                output_layer_size = int(values['-OUTPUT-LAYER-'])
                 activation_func = values['-ACTIVATION-']
                 add_dropout = values['-DROPOUT-']
 
-                # Update the AI model
-                ai.fc1 = torch.nn.Linear(64, layer1_size)
-                ai.fc2 = torch.nn.Linear(layer1_size, layer2_size)
-                ai.fc3 = torch.nn.Linear(layer2_size, layer3_size)
+                # Manually reset the layers
+                ai.layers = nn.ModuleList()  # Clear all existing layers
+                ai.layers.append(nn.Linear(input_layer_size, hidden_layer_size))  # Input to first hidden layer
 
-                # Set the activation function
+                # Manually add the specified number of hidden layers
+                for _ in range(num_hidden_layers):
+                    ai.layers.append(nn.Linear(hidden_layer_size, hidden_layer_size))
+                    if add_dropout:
+                        ai.layers.append(nn.Dropout(0.2))
+
+                # Add the final output layer
+                ai.layers.append(nn.Linear(hidden_layer_size, output_layer_size))
+
+                # Set the activation function in `ai`
                 if activation_func == 'ReLU':
-                    ai.activation_func = torch.nn.ReLU()
+                    ai.activation_func = nn.ReLU()
                 elif activation_func == 'LeakyReLU':
-                    ai.activation_func = torch.nn.LeakyReLU()
+                    ai.activation_func = nn.LeakyReLU()
                 elif activation_func == 'Tanh':
-                    ai.activation_func = torch.nn.Tanh()
+                    ai.activation_func = nn.Tanh()
                 elif activation_func == 'Sigmoid':
-                    ai.activation_func = torch.nn.Sigmoid()
+                    ai.activation_func = nn.Sigmoid()
 
-                # Add dropout layer if selected
-                ai.dropout = torch.nn.Dropout(0.2) if add_dropout else None
+                # Save configuration to the specified model path, storing activation as a string
+                torch.save({
+                    'model_state_dict': ai.state_dict(),
+                    'activation_func': activation_func  # Save as string
+                }, model_path)
 
-                print("Model configuration saved successfully.")
-                print(f"Layers: {num_layers}, Layer Sizes: [{layer1_size}, {layer2_size}, {layer3_size}]")
-                print(f"Activation Function: {activation_func}")
-                print(f"Dropout Layer: {'Enabled' if add_dropout else 'Disabled'}")
+                # Reload the model configuration from the saved file
+                checkpoint = torch.load(model_path, weights_only=True)
+                ai.configure_layers(checkpoint['model_state_dict'])
+                # Map the saved activation function string to the actual function
+                activation_func_name = checkpoint['activation_func']
+                if activation_func_name == 'ReLU':
+                    ai.activation_func = nn.ReLU()
+                elif activation_func_name == 'LeakyReLU':
+                    ai.activation_func = nn.LeakyReLU()
+                elif activation_func_name == 'Tanh':
+                    ai.activation_func = nn.Tanh()
+                elif activation_func_name == 'Sigmoid':
+                    ai.activation_func = nn.Sigmoid()
+
+                print(f"Model configuration saved and reloaded successfully from {model_path}.")
 
             except Exception as e:
                 print(f"Error in configuration: {e}")
 
     window.close()
+
 #=============================================================================================================
 
 #===============================================================================================================
@@ -556,12 +655,9 @@ layout = [
     [sg.Button('Create Model', key='-CREATE-')],
     [sg.Button('Edit Model', key='-EDIT-')],
     [sg.Text('Select Stockfish Engine'), sg.InputText('', key='-STOCKFISH-', size=(30, 1)),
-    sg.FileBrowse(file_types=(("Executable Files", "*.exe"), ("All Files", "*.*")), key='-STOCKFISH-BROWSE-')],
+     sg.FileBrowse(file_types=(("Executable Files", "*.exe"), ("All Files", "*.*")), key='-STOCKFISH-BROWSE-')],
     [sg.Button('Train', key='-TRAIN-')],
     [sg.Button('Compile AI Model to Engine', key='-COMPILE-')],
-
-
-
     [sg.Output(size=(60, 5), key='-MAIN-OUTPUT-')]
 ]
 
@@ -569,7 +665,7 @@ window = sg.Window('Chess AI Trainer', layout)
 models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
 os.makedirs(models_dir, exist_ok=True)
 
-# Initialize AI and Stockfish engine path
+# Initialize variables
 ai = None
 optimizer = None
 engine_path = None
@@ -587,9 +683,17 @@ while True:
         model_path = values['-MODEL-']
         if model_path:
             try:
+                # Specify weights_only=True to prevent the security warning
+                checkpoint = torch.load(model_path, weights_only=True)
                 ai = ChessAI()
-                ai.load_state_dict(torch.load(model_path, weights_only=True))
+                ai.configure_layers(checkpoint["model_state_dict"])
+                ai.load_state_dict(checkpoint["model_state_dict"])
                 optimizer = torch.optim.Adam(ai.parameters(), lr=default_learn_rate)
+
+                # Load optimizer state if present
+                if "optimizer_state_dict" in checkpoint:
+                    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
                 print(f"Model loaded successfully from {model_path}")
             except Exception as e:
                 sg.popup(f"Error loading model: {e}")
@@ -597,32 +701,37 @@ while True:
     # Create new AI model and save to file
     if event == '-CREATE-':
         try:
-            ai = ChessAI()  # Instantiate a new AI model
-            optimizer = torch.optim.Adam(ai.parameters(), lr=default_learn_rate)  # Set a default learning rate
+            ai = ChessAI()
+            open_neural_network_window(ai)
+            optimizer = torch.optim.Adam(ai.parameters(), lr=default_learn_rate)
 
-            # Prompt for filename
             model_name = 'new_model.pt'
-            if model_name:
-                save_path = sg.popup_get_file(
-                    'Save Model As',
-                    save_as=True,
-                    default_path=model_name,
-                    initial_folder=models_dir,
-                    no_window=True,
-                    default_extension='.pt',
-                    file_types=(("Model Files", "*.pt"), ("All Files", "*.*"))
-                )
-                if save_path:
-                    if not save_path.endswith('.pt'):
-                        save_path += '.pt'
-                    torch.save(ai.state_dict(), save_path)
-                    sg.popup(f"New model '{model_name}' created and saved successfully to {save_path}")
+            save_path = sg.popup_get_file(
+                'Save Model As',
+                save_as=True,
+                default_path=model_name,
+                initial_folder=models_dir,
+                no_window=True,
+                default_extension='.pt',
+                file_types=(("Model Files", "*.pt"), ("All Files", "*.*"))
+            )
+            if save_path:
+                if not save_path.endswith('.pt'):
+                    save_path += '.pt'
+                torch.save({
+                    "model_state_dict": ai.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict()
+                }, save_path)
+                sg.popup(f"New model '{model_name}' created and saved successfully to {save_path}")
         except Exception as e:
             sg.popup(f"Error creating or saving model: {e}")
 
     # Open training window
     if event == '-TRAIN-':
-        open_training_window(ai)
+        if ai is not None:
+            open_training_window(ai)
+        else:
+            sg.popup("Please load or create a model before training.")
 
     # Set Stockfish engine path
     if event == '-STOCKFISH-BROWSE-':
@@ -640,10 +749,17 @@ while True:
             if output_name:
                 compile_model_to_exe(model_path, output_name)
                 sg.popup(f"Model compiled to {output_name}.exe")
+        else:
+            sg.popup("Please load a model before compiling.")
 
-    # Open Neural Network window
+    # Open Neural Network window for editing
     if event == '-EDIT-':
-        open_neural_network_window(ai)
+        model_path = values['-MODEL-']
+        if ai is not None and model_path:
+            open_neural_network_window(ai, model_path)
+        else:
+            sg.popup("Please load or create a model and specify a model path before editing.")
 
 window.close()
+
 
