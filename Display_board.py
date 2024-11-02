@@ -12,7 +12,7 @@ Tk().withdraw()  # Hide the main tkinter window
 SQUARE_SIZE = 60
 BOARD_SIZE = 8
 SCREEN_WIDTH = BOARD_SIZE * SQUARE_SIZE
-SCREEN_HEIGHT = BOARD_SIZE * SQUARE_SIZE + 150# Extra space for buttons and timer
+SCREEN_HEIGHT = BOARD_SIZE * SQUARE_SIZE + 150  # Extra space for buttons and timer
 DEFAULT_BG_COLOR = '#323232'
 WHITE = (255, 255, 255)
 DARK_AQUA = (0, 139, 139)
@@ -47,7 +47,7 @@ BUTTON_TEXT_COLOR = (0, 0, 0)
 # Engine paths and autoplay state
 white_engine_path = None
 black_engine_path = None
-autoplay_active = False
+autoplay_enabled = False  # Use this single variable consistently
 
 # Timer setup
 start_time = time.time()
@@ -103,8 +103,6 @@ def draw_buttons():
         label = font.render(text, True, BUTTON_TEXT_COLOR)
         screen.blit(label, (pos[0] + 10, pos[1] + 10))
 
-
-
 # Function to draw timer
 def draw_timer():
     elapsed = time.time() - start_time
@@ -114,28 +112,78 @@ def draw_timer():
     timer_surface = font.render(timer_text, True, (255, 255, 255))
     screen.blit(timer_surface, (SCREEN_WIDTH - 475, 600))
 
-# Get legal moves for the selected piece
-def get_legal_moves(selected_square):
-    if selected_square is None:
-        return []
-    return [move for move in board.legal_moves if move.from_square == selected_square]
+# Load chess engines
+def select_white_engine():
+    global white_engine_path
+    white_engine_path = filedialog.askopenfilename(title="Select White Engine")
+    print(f"Selected White Engine: {white_engine_path}")
 
-# Handle square selection and moves
-def handle_click(position, selected_square):
-    col, row = position[0] // SQUARE_SIZE, 7 - (position[1] // SQUARE_SIZE)
-    clicked_square = chess.square(col, row)
-    piece = board.piece_at(clicked_square)
+def select_black_engine():
+    global black_engine_path
+    black_engine_path = filedialog.askopenfilename(title="Select Black Engine")
+    print(f"Selected Black Engine: {black_engine_path}")
 
-    if selected_square is None:
-        if piece and piece.color == board.turn:
-            return clicked_square
+# Toggle autoplay
+def toggle_autoplay():
+    global autoplay_enabled
+    autoplay_enabled = not autoplay_enabled
+    print(f"Autoplay {'enabled' if autoplay_enabled else 'disabled'}")
+
+# Execute AI Move
+def make_ai_move(engine_path):
+    if engine_path:
+        try:
+            engine = chess.engine.SimpleEngine.popen_uci(engine_path)
+            result = engine.play(board, chess.engine.Limit(time=2.0))
+            board.push(result.move)
+            engine.quit()
+        except FileNotFoundError:
+            print("Chess engine not found.")
     else:
-        move = chess.Move(selected_square, clicked_square)
-        if move in board.legal_moves:
-            board.push(move)
-            check_for_game_end()
-        return None
-    return selected_square
+        print("No engine loaded.")
+
+# Auto-play loop
+def autoplay():
+    while autoplay_enabled and not board.is_game_over():
+        if board.turn:  # White to move
+            if white_engine_path:
+                make_ai_move(white_engine_path)
+            else:
+                break  # Wait for player input if no white engine is loaded
+        else:  # Black to move
+            if black_engine_path:
+                make_ai_move(black_engine_path)
+            else:
+                break  # Wait for player input if no black engine is loaded
+
+        check_for_game_end()
+        draw_board()
+        draw_pieces()
+        draw_buttons()
+        draw_timer()
+        pygame.display.flip()
+def get_legal_moves(selected_square):
+            if selected_square is None:
+                return []
+            return [move for move in board.legal_moves if move.from_square == selected_square]
+
+        # Handle square selection and moves
+def handle_click(position, selected_square):
+            col, row = position[0] // SQUARE_SIZE, 7 - (position[1] // SQUARE_SIZE)
+            clicked_square = chess.square(col, row)
+            piece = board.piece_at(clicked_square)
+
+            if selected_square is None:
+                if piece and piece.color == board.turn:
+                    return clicked_square
+            else:
+                move = chess.Move(selected_square, clicked_square)
+                if move in board.legal_moves:
+                    board.push(move)
+                    check_for_game_end()
+                return None
+            return selected_square
+
 
 # Undo last move
 def undo_last_move():
@@ -161,32 +209,6 @@ def load_game():
     except FileNotFoundError:
         print("No saved game found.")
 
-# AI Move function
-def make_ai_move(engine_path):
-    if engine_path:
-        try:
-            engine = chess.engine.SimpleEngine.popen_uci(engine_path)
-            result = engine.play(board, chess.engine.Limit(time=2.0))
-            board.push(result.move)
-            engine.quit()
-        except Exception as e:
-            print("Failed to run AI engine:", e)
-
-# Select engine paths
-def select_white_engine():
-    global white_engine_path
-    white_engine_path = filedialog.askopenfilename(title="Select White Engine")
-
-def select_black_engine():
-    global black_engine_path
-    black_engine_path = filedialog.askopenfilename(title="Select Black Engine")
-
-# Autoplay between two engines
-def toggle_autoplay():
-    global autoplay_active
-    autoplay_active = not autoplay_active
-    print("Autoplay is now", "active" if autoplay_active else "inactive")
-
 # Check for checkmate, stalemate, and check
 def check_for_game_end():
     if board.is_checkmate():
@@ -208,7 +230,7 @@ def handle_button_click(pos):
     elif 370 <= x <= 470 and SCREEN_HEIGHT - 130 <= y <= SCREEN_HEIGHT - 90:
         load_game()
     elif 10 <= x <= 110 and SCREEN_HEIGHT - 80 <= y <= SCREEN_HEIGHT - 40:
-        make_ai_move()
+        make_ai_move(white_engine_path if board.turn else black_engine_path)
     elif 130 <= x <= 230 and SCREEN_HEIGHT - 80 <= y <= SCREEN_HEIGHT - 40:
         select_white_engine()
     elif 250 <= x <= 350 and SCREEN_HEIGHT - 80 <= y <= SCREEN_HEIGHT - 40:
@@ -216,11 +238,8 @@ def handle_button_click(pos):
     elif 370 <= x <= 470 and SCREEN_HEIGHT - 80 <= y <= SCREEN_HEIGHT - 40:
         toggle_autoplay()
 
-
-
 # Main loop
 def main():
-    global autoplay_active
     selected_square = None
     running = True
     while running:
@@ -241,14 +260,8 @@ def main():
                 else:
                     selected_square = handle_click(pos, selected_square)
 
-        # Autoplay between engines
-        if autoplay_active:
-            current_engine_path = white_engine_path if board.turn == chess.WHITE else black_engine_path
-            if current_engine_path:
-                make_ai_move(current_engine_path)
-            else:
-                autoplay_active = False
-                print("Autoplay stopped - no engine selected for current turn.")
+        if autoplay_enabled:
+            autoplay()  # Call the autoplay loop if enabled
 
     pygame.quit()
 
