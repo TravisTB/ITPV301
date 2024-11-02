@@ -53,6 +53,7 @@ def load_chess_ai(model_path):
         raise
 
 
+"""
 def load_chess_ai(model_path):
     try:
         # Load the checkpoint dictionary
@@ -70,6 +71,7 @@ def load_chess_ai(model_path):
     except Exception as e:
         print(f"Error loading model: {e}")
         raise
+    """
 class UCIChessEngine:
     def __init__(self, model_path):
         # Load and configure the model
@@ -134,14 +136,25 @@ class UCIChessEngine:
 # Convert the board to a tensor representation
 def board_to_tensor(board):
     board_fen = board.board_fen().replace('/', '')
-    tensor = torch.zeros(64)
+    tensor = torch.zeros(65)  # 64 squares + 1 for turn indicator
     index = 0
+
+    # Mapping each piece to an integer value
+    piece_map = {
+        'P': 1, 'N': 2, 'B': 3, 'R': 4, 'Q': 5, 'K': 6,  # White pieces
+        'p': -1, 'n': -2, 'b': -3, 'r': -4, 'q': -5, 'k': -6  # Black pieces
+    }
+
     for square in board_fen:
         if square.isdigit():
-            index += int(square)
+            index += int(square)  # Advance by empty square count
         else:
-            tensor[index] = 1 if square.isupper() else -1
+            tensor[index] = piece_map.get(square, 0)
             index += 1
+
+    # Set the turn indicator at the last index
+    tensor[64] = 1 if board.turn else -1  # +1 if white's turn, -1 if black's turn
+
     return tensor
 
 

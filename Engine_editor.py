@@ -1,56 +1,116 @@
 import os
-import PySimpleGUI as sg
-import torch
 import subprocess
 import sqlite3
 import datetime
+import threading
 
-from torch import nn
+import time
+import torch
+from torch.utils.data import DataLoader, Dataset
+import torch.nn as nn
+import torch.optim as optim
+import pandas as pd
+import PySimpleGUI as sg
+
+import chess
 
 
 # Simple PyTorch Neural Network for Chess (Placeholder)
 class ChessAI(torch.nn.Module):
-    def __init__(self, input_size=64, hidden_layer_sizes=[128, 64], output_size=1):
+    def __init__(self, input_size=65, hidden_layer_sizes=[130, 65], output_size=1, activation_func='ReLU'):
         super(ChessAI, self).__init__()
-        # Initialize layers based on default sizes
         self.layers = torch.nn.ModuleList()
 
         # Set up the layers according to the provided layer sizes
         in_features = input_size
         for hidden_size in hidden_layer_sizes:
             self.layers.append(torch.nn.Linear(in_features, hidden_size))
-            in_features = hidden_size  # Update in_features for the next layer
+            in_features = hidden_size
 
         # Add the final output layer
         self.layers.append(torch.nn.Linear(in_features, output_size))
 
+        # Set activation function with default to ReLU
+        self.set_activation_function(activation_func)
+
     def forward(self, board_tensor):
         x = board_tensor
         for layer in self.layers[:-1]:  # Apply activation to all layers except the last one
-            x = torch.relu(layer(x))
+            x = self.activation_func(layer(x))
         x = torch.sigmoid(self.layers[-1](x))  # Use sigmoid for the output layer
         return x
+
+    def set_activation_function(self, activation_func):
+        """Set the activation function dynamically."""
+        if activation_func == 'ReLU':
+            self.activation_func = torch.nn.ReLU()
+        elif activation_func == 'LeakyReLU':
+            self.activation_func = torch.nn.LeakyReLU()
+        elif activation_func == 'Tanh':
+            self.activation_func = torch.nn.Tanh()
+        elif activation_func == 'Sigmoid':
+            self.activation_func = torch.nn.Sigmoid()
+        else:
+            raise ValueError("Unsupported activation function. Choose from 'ReLU', 'LeakyReLU', 'Tanh', or 'Sigmoid'.")
+        self.activation_func_name = activation_func
 
     # Method to dynamically configure layers based on the state_dict
     def configure_layers(self, state_dict):
         # Extract layer shapes from 2D tensors in state_dict
         layer_sizes = [param.shape for param in state_dict.values() if param.ndim == 2]
 
-        # Ensure we have valid layer sizes to configure
         if not layer_sizes:
             raise ValueError("No valid layer sizes inferred from state_dict.")
 
         # Clear existing layers and reinitialize as a ModuleList
         self.layers = torch.nn.ModuleList()
 
-        # Configure each layer based on the inferred sizes
+        # Configure each layer based on inferred sizes
         in_features = layer_sizes[0][1]  # Input size from the first layer
         for out_features in [size[0] for size in layer_sizes]:
             self.layers.append(torch.nn.Linear(in_features, out_features))
-            in_features = out_features  # Update in_features for the next layer
+            in_features = out_features
 
         # Load the model weights into the configured layers
         self.load_state_dict(state_dict)
+
+
+class ChessDataset(Dataset):
+    def __init__(self, csv_file, normalize=True):
+        self.data = pd.read_csv(csv_file)
+
+        # Process the 'Evaluation' column
+        self.data['Evaluation'] = self.data['Evaluation'].apply(self.process_evaluation)
+
+        # Drop any rows where the evaluation couldn't be converted to a number
+        self.data = self.data.dropna(subset=['Evaluation'])
+        print(f"Loaded {len(self.data)} entries from the dataset.")
+
+        self.normalize = normalize
+
+    def process_evaluation(self, eval_str):
+        if isinstance(eval_str, str) and '#' in eval_str:
+            return 10000 if '+' in eval_str else -10000
+        else:
+            return float(eval_str)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+
+        # Assume 'FEN' is the column containing the board position in FEN format
+        board_fen = row['FEN']  # Replace 'FEN' with the actual column name in your CSV
+        board_tensor = board_to_tensor(board_fen)
+
+        evaluation = row['Evaluation']
+
+        # Normalize evaluation if needed
+        if self.normalize and evaluation not in [float('inf'), float('-inf')]:
+            evaluation = evaluation / 100  # Adjust normalization as required
+
+        return board_tensor, torch.tensor(evaluation, dtype=torch.float32)
 # Database setup
 def create_database():
     connection = sqlite3.connect("chess_ai_training.db")
@@ -298,10 +358,6 @@ def compile_model_to_exe(scripted_model_path, output_name="chess_engine"):
         sg.popup_error(f"Error during compilation: {e}")
 
 
-import PySimpleGUI as sg
-import torch
-import time
-
 
 def load_chess_ai(model_path):
     checkpoint = torch.load(model_path)
@@ -311,13 +367,16 @@ def load_chess_ai(model_path):
     model.eval()
     return model
 def open_training_window(ai):
+    cuda_status = "Available" if torch.cuda.is_available() else "Not Available"
     layout = [
         [sg.Text('Training Configuration', font=('Helvetica', 16))],
 
         # Device Section
         [sg.Frame('Device Settings', [
             [sg.Text('Device', tooltip="Select the hardware for training (CPU or GPU if available)"),
-             sg.Combo(['CPU', 'GPU'], default_value='CPU', key='-DEVICE-', size=(10, 1))]
+             sg.Combo(['CPU', 'GPU'], default_value='CPU', key='-DEVICE-', size=(10, 1)),
+             sg.Text(f"CUDA: {cuda_status}", key='-CUDA-STATUS-',
+                     text_color="green" if torch.cuda.is_available() else "red")]
         ])],
 
         # Data Source Section
@@ -405,6 +464,7 @@ def open_training_window(ai):
                 normalize_data = values['-NORMALIZATION-']
                 use_dropout = values['-DROPOUT-']
                 weight_init = values['-WEIGHT-INIT-']
+
                 learning_rate = float(values['-LEARNING-RATE-'])
                 batch_size = int(values['-BATCH-SIZE-'])
                 epochs = int(values['-EPOCHS-'])
@@ -416,26 +476,9 @@ def open_training_window(ai):
                 data_source = values['-DATA-SOURCE-']
                 use_engine_data = values['-USE-ENGINE-DATA-']
                 timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-
-                # Record initial configuration to database
-                record_to_db('start_training', timestamp=timestamp, device=device, normalize_data=normalize_data,
-                             use_dropout=use_dropout, weight_init=weight_init, learning_rate=learning_rate,
-                             batch_size=batch_size, epochs=epochs, optimizer_type=optimizer_type, weight_decay=weight_decay,
-                             loss_function=loss_function, use_early_stopping=use_early_stopping, training_method=training_method,
-                             data_source=data_source, use_engine_data=use_engine_data)
-
-                # Device setup
-                device = 'cuda' if device == 'GPU' and torch.cuda.is_available() else 'cpu'
-                ai.to(device)
-                print(f"Training on device: {device}")
-
-                # Placeholder function calls for data processing and training
-                dataset = load_training_data(data_source, use_engine_data, normalize_data)
-                apply_weight_initialization(ai, weight_init)
-                optimizer = get_optimizer(optimizer_type, ai, learning_rate, weight_decay)
-                criterion = get_loss_function(loss_function)
-
-                # Display configuration in output
+                print("===================================================")
+                print("")
+                print("===================================================")
                 print("Training Configuration:")
                 print(f"Learning Rate: {learning_rate}")
                 print(f"Batch Size: {batch_size}")
@@ -447,34 +490,45 @@ def open_training_window(ai):
                 print(f"Early Stopping: {'Enabled' if use_early_stopping else 'Disabled'}")
                 print(f"Training Method: {training_method}")
                 print(f"Data Source: {data_source if not use_engine_data else 'Engine data'}")
+                device = 'cuda' if device == 'GPU' and torch.cuda.is_available() else 'cpu'
+                ai.to(device)
+                print(f"Training on device: {device}")
+                print("===================================================")
+                print("")
+                print("===================================================")
+                # Device setup
 
-                # Placeholder for starting the actual training process
-                train_model(ai, dataset, optimizer, criterion, epochs, batch_size, use_dropout, use_early_stopping,
-                            device)
 
-                # Record completion of training to database
-                record_to_db('stop_training', timestamp=timestamp, training_time="00:30:00", final_loss=0.05) # Placeholder values
+                # Placeholder function calls for data processing and training
+                data_loader = load_training_data(data_source, batch_size, normalize_data)
+                apply_weight_initialization(ai, weight_init)
+                optimizer = get_optimizer(optimizer_type, ai, learning_rate, weight_decay)
+                criterion = get_loss_function(loss_function)
 
-                print("Training process started...")
+                # Display configuration in output
 
+
+                # starting the actual training process
+                train_thread = threading.Thread(
+                    target=threaded_training,
+                    args=(
+                    ai, data_loader, optimizer, criterion, epochs, use_dropout, use_early_stopping, device, model_path),
+                    daemon=True
+                )
+                train_thread.start()
+
+            except ValueError as ve:
+                print(f"Dataset error: {ve}")
             except Exception as e:
-                print(f"Error in training configuration: {e}")
+                print(f"Unexpected error: {e}")
 
     window.close()
 # Placeholder functions to customize training logic later
-def load_training_data(data_source, use_engine_data, normalize):
-    """Load training data from file or engine moves, apply normalization if required."""
-    print("Loading data...")
-    if use_engine_data:
-        print("Using engine-generated data.")
-        # Placeholder: Load data from engine here
-    elif data_source:
-        print(f"Loading data from {data_source}.")
-        # Placeholder: Load data from the provided data source here
-    if normalize:
-        print("Applying normalization.")
-        # Placeholder: Normalize data here
-    return []  # Placeholder return, replace with actual dataset
+def load_training_data(data_source, batch_size, normalize):
+    dataset = ChessDataset(data_source, normalize=normalize)
+    if len(dataset) == 0:
+        raise ValueError("The dataset is empty or could not be loaded.")
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 
 def apply_weight_initialization(model, method):
@@ -512,18 +566,145 @@ def get_loss_function(loss_function_type):
         return torch.nn.CrossEntropyLoss()
 
 
-def train_model(model, dataset, optimizer, criterion, epochs, batch_size, dropout, early_stopping, device):
-    """Main training loop, customized based on the provided configurations."""
-    print("Training model with configured parameters...")
-    # Placeholder: Implement training loop here
-    pass
+def threaded_training(ai, data_loader, optimizer, criterion, epochs, use_dropout, use_early_stopping, device,
+                      model_path, mini_epoch_size=1000):
+    ai.train()
+    best_loss = float('inf')
+    patience = 3
+    no_improvement_epochs = 0
+    clip_value = 1.0  # Gradient clipping value
+
+    for epoch in range(epochs):
+        total_loss = 0.0
+        if use_dropout:
+            ai.train()  # Enable dropout during training
+        else:
+            ai.eval()  # Disable dropout during training
+
+        mini_epoch_loss = 0.0
+        mini_epoch_count = 0
+        batch_counter = 0
+
+        for batch_idx, (board_tensors, evaluations) in enumerate(data_loader):
+            board_tensors, evaluations = board_tensors.to(device), evaluations.to(device)
+
+            # Forward pass, backward pass, and optimization step
+            optimizer.zero_grad()
+            outputs = ai(board_tensors).squeeze(-1)
+            loss = criterion(outputs, evaluations)
+            loss.backward()
+
+            # Gradient Clipping
+            torch.nn.utils.clip_grad_norm_(ai.parameters(), clip_value)
+            optimizer.step()
+
+            total_loss += loss.item()
+            mini_epoch_loss += loss.item()
+            batch_counter += 1
+            mini_epoch_count += 1
+
+            # Print progress every 10 batches
+            if batch_idx % 10 == 0:
+                print(
+                    f"Epoch [{epoch + 1}/{epochs}], Batch [{batch_idx + 1}/{len(data_loader)}], Loss: {loss.item():.4f}")
+
+            # Save checkpoint at mini-epoch intervals
+            if mini_epoch_count >= mini_epoch_size:
+                avg_mini_epoch_loss = mini_epoch_loss / mini_epoch_count
+                print(f"Mini-epoch completed. Average Loss: {avg_mini_epoch_loss:.4f}")
+
+                # Save model checkpoint
+                save_model(ai, model_path)
+                mini_epoch_loss = 0.0
+                mini_epoch_count = 0
+
+        # Calculate average loss for full epoch
+        avg_loss = total_loss / batch_counter
+        print(f"Epoch {epoch + 1} completed. Average Loss: {avg_loss:.4f}")
+
+        # Check if this is the best model so far
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            save_model(ai, model_path)  # Save the best model
+            print(f"New best model saved with loss {best_loss:.4f}")
+            no_improvement_epochs = 0
+        else:
+            no_improvement_epochs += 1
+
+        # Early stopping if no improvement for `patience` epochs
+        if use_early_stopping and no_improvement_epochs >= patience:
+            print(f"Early stopping triggered. No improvement in last {patience} epochs.")
+            break
+
+    print("Training complete.")
+    print(f"Best model saved with loss: {best_loss:.4f} at '{model_path}'")
+def board_to_tensor(fen):
+    # Split the FEN string to extract the board position and active color
+    parts = fen.split()
+    board_fen = parts[0].replace('/', '')  # First part is the board layout, with '/' removed
+    active_color = parts[1]  # Second part is the active color
+
+    # Initialize a tensor with 65 elements: 64 squares + 1 for turn indicator
+    tensor = torch.zeros(65)
+    index = 0
+
+    # Mapping each piece to an integer value
+    piece_map = {
+        'P': 1, 'N': 2, 'B': 3, 'R': 4, 'Q': 5, 'K': 6,  # White pieces
+        'p': -1, 'n': -2, 'b': -3, 'r': -4, 'q': -5, 'k': -6  # Black pieces
+    }
+
+    # Populate the tensor with board pieces
+    for square in board_fen:
+        if square.isdigit():
+            index += int(square)  # Skip empty squares
+        else:
+            if index >= 64:
+                raise ValueError("FEN string has more than 64 squares.")
+            tensor[index] = piece_map.get(square, 0)
+            index += 1
+
+    # Set the turn indicator: +1 if white's turn, -1 if black's turn
+    tensor[64] = 1 if active_color == 'w' else -1
+
+    return tensor
 
 
-import torch.nn as nn
-import PySimpleGUI as sg
+def save_model(ai, model_path):
+    """Save model state and configuration to the specified path."""
+    torch.save({
+        'model_state_dict': ai.state_dict(),
+        'activation_func': ai.activation_func_name  # Save the activation function as a string
+    }, model_path)
+    print(f"Model saved successfully with activation function '{ai.activation_func_name}' at {model_path}.")
 
-import torch.nn as nn
-import PySimpleGUI as sg
+
+def load_model(ai, model_path):
+    """Load model state and configuration from the specified path."""
+    checkpoint = torch.load(model_path)
+
+    # Load the model's parameters
+    ai.load_state_dict(checkpoint['model_state_dict'])
+
+    # Retrieve and set the activation function
+    activation_func_name = checkpoint['activation_func']
+    if activation_func_name == 'ReLU':
+        ai.activation_func = nn.ReLU()
+    elif activation_func_name == 'LeakyReLU':
+        ai.activation_func = nn.LeakyReLU()
+    elif activation_func_name == 'Tanh':
+        ai.activation_func = nn.Tanh()
+    elif activation_func_name == 'Sigmoid':
+        ai.activation_func = nn.Sigmoid()
+    else:
+        raise ValueError(f"Unsupported activation function '{activation_func_name}' in checkpoint.")
+
+    print(f"Model loaded successfully with activation function '{activation_func_name}' from {model_path}.")
+
+def adjust_learning_rate(optimizer, decay_factor=0.9):
+    for param_group in optimizer.param_groups:
+        param_group['lr'] *= decay_factor
+    print("Learning rate adjusted.")
 
 
 def open_neural_network_window(ai, model_path):
@@ -702,9 +883,9 @@ while True:
     if event == '-CREATE-':
         try:
             ai = ChessAI()
-            open_neural_network_window(ai)
             optimizer = torch.optim.Adam(ai.parameters(), lr=default_learn_rate)
 
+            # Prompt for filename and save the model
             model_name = 'new_model.pt'
             save_path = sg.popup_get_file(
                 'Save Model As',
@@ -715,14 +896,22 @@ while True:
                 default_extension='.pt',
                 file_types=(("Model Files", "*.pt"), ("All Files", "*.*"))
             )
+
             if save_path:
+                # Ensure the file has the correct extension
                 if not save_path.endswith('.pt'):
                     save_path += '.pt'
+
+                # Save the initial model state
                 torch.save({
                     "model_state_dict": ai.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict()
                 }, save_path)
                 sg.popup(f"New model '{model_name}' created and saved successfully to {save_path}")
+
+                # Open the neural network configuration window after saving the model
+                open_neural_network_window(ai, save_path)
+
         except Exception as e:
             sg.popup(f"Error creating or saving model: {e}")
 
