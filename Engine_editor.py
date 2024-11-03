@@ -3,14 +3,15 @@ import subprocess
 import sqlite3
 import datetime
 import threading
-
+import PySimpleGUI as sg
 import time
 import torch
 from torch.utils.data import DataLoader, Dataset
 import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
-import PySimpleGUI as sg
+import random
+import copy
 
 import chess
 
@@ -19,6 +20,12 @@ import chess
 class ChessAI(torch.nn.Module):
     def __init__(self, input_size=65, hidden_layer_sizes=[130, 65], output_size=1, activation_func='ReLU'):
         super(ChessAI, self).__init__()
+
+        self.input_size = input_size
+        self.hidden_layer_sizes = hidden_layer_sizes
+        self.output_size = output_size
+        self.activation_func_name = activation_func
+
         self.layers = torch.nn.ModuleList()
 
         # Set up the layers according to the provided layer sizes
@@ -35,9 +42,9 @@ class ChessAI(torch.nn.Module):
 
     def forward(self, board_tensor):
         x = board_tensor
-        for layer in self.layers[:-1]:  # Apply activation to all layers except the last one
+        for layer in self.layers[:-1]:
             x = self.activation_func(layer(x))
-        x = torch.sigmoid(self.layers[-1](x))  # Use sigmoid for the output layer
+        x = torch.sigmoid(self.layers[-1](x))  # Output layer
         return x
 
     def set_activation_function(self, activation_func):
@@ -74,6 +81,15 @@ class ChessAI(torch.nn.Module):
         # Load the model weights into the configured layers
         self.load_state_dict(state_dict)
 
+    def clone(self):
+        """
+        Creates a clone of the model with the same weights.
+        """
+        # Create a new instance of the model
+        cloned_model = ChessAI()
+        # Load the same state dictionary into the cloned model
+        cloned_model.load_state_dict(copy.deepcopy(self.state_dict()))
+        return cloned_model
 
 class ChessDataset(Dataset):
     def __init__(self, csv_file, normalize=True):
@@ -373,7 +389,8 @@ def open_training_window(ai):
 
         # Device Section
         [sg.Frame('Device Settings', [
-            [sg.Text('Device', tooltip="Select the hardware for training (CPU or GPU if available)"),
+            [sg.Text('Device',
+                     tooltip="Select the hardware to run training on. Choose 'CPU' for general processing or 'GPU' (if available) for faster computation on compatible hardware."),
              sg.Combo(['CPU', 'GPU'], default_value='CPU', key='-DEVICE-', size=(10, 1)),
              sg.Text(f"CUDA: {cuda_status}", key='-CUDA-STATUS-',
                      text_color="green" if torch.cuda.is_available() else "red")]
@@ -381,60 +398,84 @@ def open_training_window(ai):
 
         # Data Source Section
         [sg.Frame('Data Source', [
-            [sg.Text('Training Data Source',
-                     tooltip="Specify the dataset for training or use a chess engine as source."),
+            [sg.Text('Data Source',
+                     tooltip="Specify the dataset file for training, such as a .csv, .txt, or .json format, or choose to use a chess engine as the source."),
              sg.InputText('', key='-DATA-SOURCE-', size=(30, 1)),
              sg.FileBrowse(file_types=(("Data Files", "*.csv *.txt *.json"), ("All Files", "*.*")),
                            key='-DATA-BROWSE-')],
-            [sg.Checkbox('Use Engine as Data Source', key='-USE-ENGINE-DATA-', default=False,
-                         tooltip="Use moves from a chess engine as training data.")],
-            [sg.Checkbox('Apply Data Normalization', key='-NORMALIZATION-', default=True,
-                         tooltip="Applies normalization to scale input data to a common range.")]
+            [sg.Checkbox('Use Engine Data', key='-USE-ENGINE-DATA-', default=False,
+                         tooltip="Generate training data dynamically from a chess engine."),
+             sg.Checkbox('Apply Data Normalization', key='-NORMALIZATION-', default=True,
+                         tooltip="Scale input data to a common range for better performance.")]
         ])],
 
         # Model Settings Section
         [sg.Frame('Model Settings', [
             [sg.Checkbox('Enable Dropout (20%)', key='-DROPOUT-', default=True,
-                         tooltip="Randomly ignores 20% of neurons during training to prevent overfitting.")],
-            [sg.Text('Weight Initialization', tooltip="Method to initialize weights in the neural network."),
+                         tooltip="Ignores 20% of neurons randomly during training to prevent overfitting and encourage generalization."),
+             sg.Text('Weight Initialization',
+                     tooltip="Select a method for initializing weights in the network layers to stabilize learning."),
              sg.Combo(['Xavier', 'He', 'Uniform', 'Normal'], default_value='Xavier', key='-WEIGHT-INIT-', size=(10, 1))]
         ])],
 
         # Training Hyperparameters Section
         [sg.Frame('Training Hyperparameters', [
-            [sg.Text('Learning Rate', tooltip="Controls the step size during gradient descent."),
+            [sg.Text('Learning Rate',
+                     tooltip="Adjust this to control how quickly the model learns. A lower value results in slower, more stable learning, while a higher value speeds up training."),
              sg.InputText('0.001', key='-LEARNING-RATE-', size=(10, 1), enable_events=True)],
-            [sg.Text('Batch Size', tooltip="Number of samples per training batch."),
+            [sg.Text('Batch Size',
+                     tooltip="Defines how many samples are processed before updating model weights. Larger values increase memory use but can improve stability."),
              sg.InputText('32', key='-BATCH-SIZE-', size=(10, 1), enable_events=True)],
-            [sg.Text('Number of Epochs', tooltip="Number of times the entire dataset is passed through the model."),
+            [sg.Text('Epochs',
+                     tooltip="The total number of complete passes through the dataset. Increasing this allows the model to learn more but may risk overfitting."),
              sg.InputText('10', key='-EPOCHS-', size=(10, 1), enable_events=True)],
+            [sg.Text('Mini-Epoch Size',
+                     tooltip="Defines the number of batches processed within each mini-epoch, providing early feedback and frequent checkpoints."),
+             sg.InputText('5', key='-MINI-EPOCH-SIZE-', size=(10, 1), enable_events=True)],
+            [sg.Text('Gradient Clipping',
+                     tooltip="Sets a maximum limit for gradients to prevent them from becoming too large and destabilizing training."),
+             sg.InputText('1.0', key='-GRADIENT-CLIP-', size=(10, 1), enable_events=True)]
         ])],
 
         # Optimizer Settings Section
         [sg.Frame('Optimizer Settings', [
-            [sg.Text('Optimizer Type', tooltip="Algorithm for updating model weights during training."),
+            [sg.Text('Optimizer Type',
+                     tooltip="Choose an algorithm for updating weights during training. Options include Adam (adaptive learning), SGD (classic gradient descent), and RMSprop (smoother gradients)."),
              sg.Combo(['Adam', 'SGD', 'RMSprop'], default_value='Adam', key='-OPTIMIZER-', size=(10, 1))],
-            [sg.Text('Weight Decay', tooltip="Regularization parameter to penalize large weights."),
+            [sg.Text('Weight Decay',
+                     tooltip="Applies regularization to reduce overfitting by penalizing large weights, helping the model generalize better."),
              sg.InputText('0.0', key='-WEIGHT-DECAY-', size=(10, 1), enable_events=True)]
         ])],
 
         # Loss Function Section
         [sg.Frame('Loss Function', [
-            [sg.Text('Loss Function', tooltip="Function that measures the model's error."),
+            [sg.Text('Loss Function',
+                     tooltip="Defines how error is calculated. Use MSELoss for regression tasks, and CrossEntropyLoss for classification tasks."),
              sg.Combo(['MSELoss', 'CrossEntropyLoss'], default_value='MSELoss', key='-LOSS-FUNCTION-', size=(15, 1))]
         ])],
 
         # Training Method and Early Stopping Section
         [sg.Frame('Training Method', [
-            [sg.Text('Training Method', tooltip="Strategy to optimize the model (e.g., supervised, reinforcement)."),
-             sg.Combo(['Supervised', 'Reinforcement', 'Genetic'], default_value='Supervised', key='-TRAINING-METHOD-',
-                      size=(15, 1))],
+            [sg.Text('Training Method',
+                     tooltip="Choose between backpropagation (traditional gradient-based learning) and genetic algorithm (evolutionary learning) for training."),
+             sg.Combo(['Backpropagation', 'Genetic Algorithm'], default_value='Backpropagation',
+                      key='-TRAINING-METHOD-', size=(15, 1))],
+            [sg.Text('Population Size',
+                     tooltip="Defines the number of individuals in each generation for the genetic algorithm. A larger population increases diversity but requires more computation."),
+             sg.InputText('10', key='-POPULATION-SIZE-', size=(10, 1), enable_events=True)],
+            [sg.Text('Mutation Rate',
+                     tooltip="Determines the probability of mutation in the genetic algorithm. Higher rates add randomness; lower rates preserve inherited traits."),
+             sg.InputText('0.05', key='-MUTATION-RATE-', size=(10, 1), enable_events=True)],
+            [sg.Text('Generations',
+                     tooltip="Specifies the maximum number of generations to run when using the genetic algorithm, controlling how long evolution continues."),
+             sg.InputText('100', key='-GENERATIONS-', size=(10, 1), enable_events=True)],
             [sg.Checkbox('Use Early Stopping', key='-EARLY-STOPPING-', default=False,
-                         tooltip="Stops training when validation loss stops improving.")]
+                         tooltip="Stops training when no improvement is observed in validation loss after a set number of epochs.")]
         ])],
 
         # Training Control Buttons
         [sg.Button('Start Training', key='-START-TRAINING-')],
+        [sg.Button('Stop Training', key='-STOP-TRAINING-')],
         [sg.Output(size=(60, 10), key='-TRAINING-OUTPUT-')]
     ]
 
@@ -452,19 +493,22 @@ def open_training_window(ai):
         numeric_input(event, '-LEARNING-RATE-')
         numeric_input(event, '-BATCH-SIZE-')
         numeric_input(event, '-EPOCHS-')
+        numeric_input(event, '-GRADIENT-CLIP-')
         numeric_input(event, '-WEIGHT-DECAY-')
+        numeric_input(event, '-POPULATION-SIZE-')
+        numeric_input(event, '-MUTATION-RATE-')
 
         if event == sg.WINDOW_CLOSED:
             break
 
-        if event == '-START-TRAINING-':
+        elif event == '-START-TRAINING-':
             try:
                 # Fetch and parse hyperparameters
                 device = values['-DEVICE-']
                 normalize_data = values['-NORMALIZATION-']
                 use_dropout = values['-DROPOUT-']
                 weight_init = values['-WEIGHT-INIT-']
-
+                mini_epoch_size = values['-MINI-EPOCH-SIZE-']
                 learning_rate = float(values['-LEARNING-RATE-'])
                 batch_size = int(values['-BATCH-SIZE-'])
                 epochs = int(values['-EPOCHS-'])
@@ -475,6 +519,10 @@ def open_training_window(ai):
                 training_method = values['-TRAINING-METHOD-']
                 data_source = values['-DATA-SOURCE-']
                 use_engine_data = values['-USE-ENGINE-DATA-']
+                population_size = int(values['-POPULATION-SIZE-'])
+                mutation_rate = float(values['-MUTATION-RATE-'])
+                generations = int(values['-GENERATIONS-'])
+                clip_value = float(values['-GRADIENT-CLIP-'])
                 timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
                 print("===================================================")
                 print("")
@@ -505,14 +553,16 @@ def open_training_window(ai):
                 optimizer = get_optimizer(optimizer_type, ai, learning_rate, weight_decay)
                 criterion = get_loss_function(loss_function)
 
-                # Display configuration in output
 
+
+                stop_training = False  # Reset stop flag at the beginning of each training
 
                 # starting the actual training process
                 train_thread = threading.Thread(
                     target=threaded_training,
                     args=(
-                    ai, data_loader, optimizer, criterion, epochs, use_dropout, use_early_stopping, device, model_path),
+                    ai, data_loader, optimizer, criterion, epochs, use_dropout, use_early_stopping, device, model_path,
+                    mini_epoch_size, clip_value, training_method, population_size, mutation_rate, generations),
                     daemon=True
                 )
                 train_thread.start()
@@ -521,6 +571,10 @@ def open_training_window(ai):
                 print(f"Dataset error: {ve}")
             except Exception as e:
                 print(f"Unexpected error: {e}")
+        if event == '-STOP-TRAINING-':
+            stop_training = True
+            print("Stop button pressed. Stopping training after current batch.")
+
 
     window.close()
 # Placeholder functions to customize training logic later
@@ -565,79 +619,170 @@ def get_loss_function(loss_function_type):
     elif loss_function_type == 'CrossEntropyLoss':
         return torch.nn.CrossEntropyLoss()
 
+def clone_model(original_model):
+    """Create a clone of the model with the same configuration and weights."""
+    cloned_model = ChessAI(
+        input_size=original_model.input_size,
+        hidden_layer_sizes=original_model.hidden_layer_sizes,
+        output_size=original_model.output_size,
+        activation_func=original_model.activation_func_name
+    )
 
-def threaded_training(ai, data_loader, optimizer, criterion, epochs, use_dropout, use_early_stopping, device,
-                      model_path, mini_epoch_size=1000):
-    ai.train()
+    # Reconfigure layers based on the loaded state_dict
+    state_dict = copy.deepcopy(original_model.state_dict())
+    cloned_model.configure_layers(state_dict)  # Modify the model's layers to match state_dict structure
+    cloned_model.load_state_dict(state_dict)
+    return cloned_model
+def threaded_training(ai, data_loader, optimizer, criterion, epochs, use_dropout, use_early_stopping, device, model_path,
+                      mini_epoch_size, clip_value, training_method, population_size, mutation_rate, generations):
+    global stop_training
+    ai.to(device)
     best_loss = float('inf')
     patience = 3
     no_improvement_epochs = 0
-    clip_value = 1.0  # Gradient clipping value
+    # Gradient clipping value
 
-    for epoch in range(epochs):
-        total_loss = 0.0
-        if use_dropout:
-            ai.train()  # Enable dropout during training
-        else:
-            ai.eval()  # Disable dropout during training
+    # Training loop based on the selected training method
+    if training_method == 'Backpropagation':
+        ai.train()
 
-        mini_epoch_loss = 0.0
-        mini_epoch_count = 0
-        batch_counter = 0
+        for epoch in range(epochs):
+            if stop_training:
+                print("Training stopped by user.")
+                break
 
-        for batch_idx, (board_tensors, evaluations) in enumerate(data_loader):
-            board_tensors, evaluations = board_tensors.to(device), evaluations.to(device)
+            total_loss = 0.0
+            if use_dropout:
+                ai.train()  # Enable dropout
+            else:
+                ai.eval()  # Disable dropout
 
-            # Forward pass, backward pass, and optimization step
-            optimizer.zero_grad()
-            outputs = ai(board_tensors).squeeze(-1)
-            loss = criterion(outputs, evaluations)
-            loss.backward()
+            mini_epoch_loss = 0.0
+            mini_epoch_count = 0
+            batch_counter = 0
 
-            # Gradient Clipping
-            torch.nn.utils.clip_grad_norm_(ai.parameters(), clip_value)
-            optimizer.step()
+            # Standard backpropagation with mini-epoch handling
+            for batch_idx, (board_tensors, evaluations) in enumerate(data_loader):
+                board_tensors, evaluations = board_tensors.to(device), evaluations.to(device)
 
-            total_loss += loss.item()
-            mini_epoch_loss += loss.item()
-            batch_counter += 1
-            mini_epoch_count += 1
+                optimizer.zero_grad()
+                outputs = ai(board_tensors).squeeze(-1)
+                loss = criterion(outputs, evaluations)
+                loss.backward()
 
-            # Print progress every 10 batches
-            if batch_idx % 10 == 0:
-                print(
-                    f"Epoch [{epoch + 1}/{epochs}], Batch [{batch_idx + 1}/{len(data_loader)}], Loss: {loss.item():.4f}")
+                # Gradient Clipping
+                torch.nn.utils.clip_grad_norm_(ai.parameters(), clip_value)
+                optimizer.step()
 
-            # Save checkpoint at mini-epoch intervals
-            if mini_epoch_count >= mini_epoch_size:
-                avg_mini_epoch_loss = mini_epoch_loss / mini_epoch_count
-                print(f"Mini-epoch completed. Average Loss: {avg_mini_epoch_loss:.4f}")
+                total_loss += loss.item()
+                mini_epoch_loss += loss.item()
+                batch_counter += 1
+                mini_epoch_count += 1
 
-                # Save model checkpoint
-                save_model(ai, model_path)
-                mini_epoch_loss = 0.0
-                mini_epoch_count = 0
+                # Print progress every 10 batches
+                if batch_idx % 10 == 0:
+                    print(f"Epoch [{epoch + 1}/{epochs}], Batch [{batch_idx + 1}/{len(data_loader)}], Loss: {loss.item():.4f}")
 
-        # Calculate average loss for full epoch
-        avg_loss = total_loss / batch_counter
-        print(f"Epoch {epoch + 1} completed. Average Loss: {avg_loss:.4f}")
+                # Mini-epoch checkpoint
+                if mini_epoch_count >= mini_epoch_size:
+                    avg_mini_epoch_loss = mini_epoch_loss / mini_epoch_count
+                    print(f"Mini-epoch completed. Average Loss: {avg_mini_epoch_loss:.4f}")
+                    save_model(ai, model_path)  # Save model checkpoint
+                    mini_epoch_loss = 0.0
+                    mini_epoch_count = 0
 
-        # Check if this is the best model so far
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            save_model(ai, model_path)  # Save the best model
-            print(f"New best model saved with loss {best_loss:.4f}")
-            no_improvement_epochs = 0
-        else:
-            no_improvement_epochs += 1
+            avg_loss = total_loss / batch_counter
+            print(f"Epoch {epoch + 1} completed. Average Loss: {avg_loss:.4f}")
 
-        # Early stopping if no improvement for `patience` epochs
-        if use_early_stopping and no_improvement_epochs >= patience:
-            print(f"Early stopping triggered. No improvement in last {patience} epochs.")
-            break
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                save_model(ai, model_path)  # Save best model
+                print(f"New best model saved with loss {best_loss:.4f}")
+                no_improvement_epochs = 0
+            else:
+                no_improvement_epochs += 1
 
-    print("Training complete.")
-    print(f"Best model saved with loss: {best_loss:.4f} at '{model_path}'")
+            if use_early_stopping and no_improvement_epochs >= patience:
+                print(f"Early stopping triggered. No improvement in last {patience} epochs.")
+                break
+
+        print("Backpropagation training complete.")
+        print(f"Best model saved with loss: {best_loss:.4f} at '{model_path}'")
+
+
+
+    elif training_method == 'Genetic Algorithm':
+
+        print("Starting Genetic Algorithm Training")
+
+        # Initialize the population and move each model to the specified device
+
+        population = [clone_model(ai).to(device) for _ in range(population_size)]
+
+        for generation in range(generations):
+
+            if stop_training:
+                print("Training stopped by user.")
+
+                break
+
+            fitness_scores = []
+
+            for individual in population:
+                # Ensure each individual in the population is on the correct device
+
+                individual.to(device)
+
+                # Evaluate fitness using a small sample batch
+
+                sample_batch = next(iter(data_loader))
+
+                board_tensors, evaluations = sample_batch
+
+                board_tensors, evaluations = board_tensors.to(device), evaluations.to(device)
+
+                outputs = individual(board_tensors).squeeze(-1)
+
+                loss = criterion(outputs, evaluations)
+
+                fitness = -loss.item()  # Fitness is the negative loss for maximization purposes
+
+                fitness_scores.append(fitness)
+
+            # Print the population size and fitness score count for debugging
+
+            print(f"Population size: {len(population)}, Fitness scores count: {len(fitness_scores)}")
+
+            if len(fitness_scores) == 0:
+                print("Error: No fitness scores calculated. Ending genetic algorithm training early.")
+
+                break
+
+            # Selection of top individuals (elites) and reproduction
+
+            elite_individuals = select_elite_individuals(population, fitness_scores, num_elites=2)
+
+            population = generate_new_population(elite_individuals, population_size, mutation_rate)
+
+            # Move the population models to the correct device
+
+            population = [ind.to(device) for ind in population]
+
+            # Save the best individual of this generation
+
+            best_fitness = max(fitness_scores)
+
+            best_individual_idx = fitness_scores.index(best_fitness)
+
+            best_individual = population[best_individual_idx]
+
+            save_model(best_individual, model_path)
+
+            print(f"Best individual in generation {generation + 1} with fitness: {best_fitness}")
+
+        print("Genetic Algorithm training complete.")
+
+        print(f"Best model saved at '{model_path}'")
 def board_to_tensor(fen):
     # Split the FEN string to extract the board position and active color
     parts = fen.split()
@@ -707,6 +852,55 @@ def adjust_learning_rate(optimizer, decay_factor=0.9):
     print("Learning rate adjusted.")
 
 
+def select_elite_individuals(population, fitness_scores, num_elites=2):
+    """Selects the top individuals (elite) based on fitness scores to retain across generations."""
+    # Sort indices by fitness score in descending order (best to worst)
+    sorted_indices = sorted(range(len(fitness_scores)), key=lambda i: fitness_scores[i], reverse=True)
+    # Select the top `num_elites` individuals
+    elite_individuals = [population[idx] for idx in sorted_indices[:num_elites]]
+    return elite_individuals
+
+def generate_new_population(elite_individuals, population_size, mutation_rate):
+    """Creates a new population, keeping elite individuals and adding mutated offspring."""
+    new_population = elite_individuals[:]  # Start with elite individuals
+
+    # Generate offspring to reach the full population size
+    num_offspring_needed = population_size - len(elite_individuals)
+    for _ in range(num_offspring_needed):
+        parent = random.choice(elite_individuals)  # Select a parent from elites for mutation
+        mutated_offspring = apply_mutation(parent, mutation_rate)
+        new_population.append(mutated_offspring)
+
+    return new_population
+
+def apply_mutation(individual, mutation_rate):
+    """Mutates weights in the AI model based on mutation rate."""
+    for param in individual.parameters():
+        if torch.rand(1).item() < mutation_rate:
+            noise = torch.randn_like(param) * 0.1  # Adjust noise scale as necessary
+            param.data += noise
+    return individual
+def select_top_individuals(population, fitness_scores, selection_rate=0.5):
+    """Selects the top percentage of individuals based on fitness scores."""
+    sorted_indices = sorted(range(len(fitness_scores)), key=lambda i: fitness_scores[i], reverse=True)
+    cutoff = int(len(sorted_indices) * selection_rate)
+    return [population[idx] for idx in sorted_indices[:cutoff]]
+
+def reproduce_population(top_individuals, mutation_rate):
+    """Creates a new population by randomly mutating the selected top individuals."""
+    new_population = []
+    for individual in top_individuals:
+        mutated_individual = mutate(individual, mutation_rate)
+        new_population.append(mutated_individual)
+    return new_population
+
+def mutate(individual, mutation_rate):
+    """Mutates weights in the AI model based on mutation rate."""
+    for param in individual.parameters():
+        if torch.rand(1).item() < mutation_rate:
+            noise = torch.randn_like(param) * 0.1  # Adjust noise scale as necessary
+            param.data += noise
+    return individual
 def open_neural_network_window(ai, model_path):
     # Load existing model configuration if the file exists, with weights_only=True
     try:
@@ -851,6 +1045,7 @@ ai = None
 optimizer = None
 engine_path = None
 default_learn_rate = 0.001
+stop_training = False
 
 # Main event loop
 while True:
