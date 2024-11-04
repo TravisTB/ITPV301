@@ -1,19 +1,18 @@
-import os
-import subprocess
-import sqlite3
-import datetime
-import threading
-import PySimpleGUI as sg
-import time
-import torch
-from torch.utils.data import DataLoader, Dataset
-import torch.nn as nn
-import torch.optim as optim
-import pandas as pd
-import random
 import copy
+import datetime
+import os
+import random
+import sqlite3
+import subprocess
+import threading
+import time
 
-import chess
+import PySimpleGUI as sg
+import pandas as pd
+import torch
+import torch.nn as nn
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
 
 
 # Simple PyTorch Neural Network for Chess (Placeholder)
@@ -351,27 +350,71 @@ save_loss_history(model_id=1, epoch=2, loss=0.08)
 # Function to compile AI to a UCI-compatible engine and save as .exe
 def compile_model_to_exe(scripted_model_path, output_name="chess_engine"):
     try:
+        # Step 1: Edit the chess engine template file
+        print("Step 1: Editing the chess engine template file...")
         with open('chess_engine_template.py', 'r') as template_file:
             wrapper_content = template_file.read()
 
-        wrapper_content = wrapper_content.replace('{model_path}', scripted_model_path)
+        # Replace placeholder in the template with the model filename (relative path)
+        model_filename = os.path.basename(scripted_model_path)
+        wrapper_content = wrapper_content.replace('{model_path}', model_filename)
+
+        # Write the edited chess engine script to a temporary file
         wrapper_script_path = f"{output_name}.py"
         with open(wrapper_script_path, 'w') as wrapper_script_file:
             wrapper_script_file.write(wrapper_content)
 
-        script_full_path = os.path.abspath(wrapper_script_path)
-        subprocess.run(["pyinstaller", "--onefile", script_full_path])
+        print("Step 1 Completed: Template modified and saved to temporary script.")
 
+        # Step 2: Selecting a random icon from the 'pieces' folder and saving it for bundling
+        print("Step 2: Selecting a random icon from the 'pieces' folder...")
+
+        # Get all .png files from the 'pieces' directory
+        pieces_dir = os.path.join(os.getcwd(), 'pieces')
+        png_files = [f for f in os.listdir(pieces_dir) if f.endswith('.png')]
+
+        if not png_files:
+            raise FileNotFoundError("No PNG files found in the 'pieces' directory.")
+
+        # Select a random PNG file
+        selected_png = random.choice(png_files)
+        selected_png_path = os.path.join(pieces_dir, selected_png)
+
+        # Convert the selected PNG to ICO format (PyInstaller requires .ico for icons)
+        temp_directory = os.path.dirname(os.path.abspath(wrapper_script_path))
+        icon_path = os.path.join(temp_directory, 'random_icon.ico')
+
+        with Image.open(selected_png_path) as img:
+            img.save(icon_path, format='ICO')
+
+        print(f"Selected icon: {selected_png}, saved as 'random_icon.ico' for bundling.")
+
+        # Step 3: Compile using PyInstaller with `--onefile`
+        print("Step 3: Compiling using PyInstaller...")
+        subprocess.run([
+            "pyinstaller",
+            "--onefile",  # Compile as a single .exe file
+            "--name", output_name,  # Set output executable name
+            "--icon", icon_path,  # Use the selected icon
+            "--add-data", f"{scripted_model_path};.",  # Include the model in the main directory of the output
+            wrapper_script_path,
+            "--noconfirm"  # Automatically confirm overwriting files if they already exist
+        ], check=True)
+
+        print("Step 3 Completed: Compilation finished.")
+
+        # Step 4: Clean up temporary files
+        print("Step 4: Cleaning up temporary files...")
         if os.path.exists(wrapper_script_path):
             os.remove(wrapper_script_path)
-        spec_file = f"{output_name}.spec"
-        if os.path.exists(spec_file):
-            os.remove(spec_file)
+        if os.path.exists(icon_path):
+            os.remove(icon_path)
+        print("Step 4 Completed: Clean-up done.")
 
-        sg.popup("Compilation successful!", title="Success")
+        print("Compilation successful!")
 
     except Exception as e:
-        sg.popup_error(f"Error during compilation: {e}")
+        print(f"Error during compilation: {e}")
 
 
 
