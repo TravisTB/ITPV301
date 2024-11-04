@@ -7,3 +7,5 @@ s221261052 - Simeon Oosthuizen
 
 
 Prerequisites : Have stockfish exe in stockfish folder
+                training data extracted under trainin_data
+                
