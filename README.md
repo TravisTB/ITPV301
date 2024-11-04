@@ -6,7 +6,8 @@ s225876892 - Travis Te Brugge
 s221261052 - Simeon Oosthuizen
 
 
-Prerequisites : Have stockfish exe in stockfish folder
+Prerequisites : 
+1) Have stockfish exe in stockfish folder
 
-                training data extracted under trainin_data
+2) training data extracted under trainin_data
                 
