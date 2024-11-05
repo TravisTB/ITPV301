@@ -220,7 +220,7 @@ def save_model_configuration(ai, model_name):
 
     return config_id
 
-# Example usage of saving a model configuration
+
 # Assuming `ai` is an instance of ChessAI and model_name is provided
 # config_id = save_model_configuration(ai, "ChessAI_Model")
 def record_to_db(training_method, model_id, model_name, epoch=None, generation=None, best_loss=None, avg_loss=None, best_fitness=None, avg_fitness=None, elite_average_fitness=None):
