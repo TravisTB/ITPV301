@@ -138,21 +138,13 @@ def create_database():
     CREATE TABLE IF NOT EXISTS model_configurations (
         config_id INTEGER PRIMARY KEY AUTOINCREMENT,
         model_name TEXT,
-        device TEXT,
-        learning_rate REAL,
-        batch_size INTEGER,
-        epochs INTEGER,
-        optimizer_type TEXT,
-        weight_decay REAL,
-        loss_function TEXT,
-        dropout_enabled INTEGER,
-        weight_init_method TEXT,
-        training_method TEXT,
-        use_early_stopping INTEGER,
-        data_source TEXT,
-        use_engine_data INTEGER,
+        input_size INTEGER,
+        hidden_layer_sizes TEXT,
+        output_size INTEGER,
+        activation_func TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_updated TIMESTAMP
+        last_updated TIMESTAMP,
+        UNIQUE(model_name, input_size, hidden_layer_sizes, output_size, activation_func)
     )
     """)
 
@@ -200,31 +192,37 @@ def create_database():
     connection.close()
 
 # Save model configuration function
-def save_model_configuration(model_name, device, learning_rate, batch_size, epochs, optimizer_type,
-                             weight_decay, loss_function, dropout_enabled, weight_init_method,
-                             training_method, use_early_stopping, data_source, use_engine_data):
+def save_model_configuration(ai, model_name):
     connection = sqlite3.connect("chess_ai_training.db")
     cursor = connection.cursor()
 
-    # Insert configuration
+    # Serialize the hidden layer sizes to store in the database
+    hidden_layer_sizes_str = ",".join(map(str, ai.hidden_layer_sizes))
+
+    # Insert configuration or ignore if it already exists
     cursor.execute("""
-    INSERT INTO model_configurations (
-        model_name, device, learning_rate, batch_size, epochs, optimizer_type, weight_decay,
-        loss_function, dropout_enabled, weight_init_method, training_method, 
-        use_early_stopping, data_source, use_engine_data, last_updated
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO model_configurations (
+        model_name, input_size, hidden_layer_sizes, output_size, activation_func, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?)
     """, (
-        model_name, device, learning_rate, batch_size, epochs, optimizer_type, weight_decay,
-        loss_function, int(dropout_enabled), weight_init_method, training_method,
-        int(use_early_stopping), data_source, int(use_engine_data),
-        datetime.now()
+        model_name, ai.input_size, hidden_layer_sizes_str, ai.output_size, ai.activation_func_name, datetime.now()
     ))
 
-    config_id = cursor.lastrowid
+    # Retrieve the config_id of the inserted or existing configuration
+    cursor.execute("""
+    SELECT config_id FROM model_configurations
+    WHERE model_name = ? AND input_size = ? AND hidden_layer_sizes = ? AND output_size = ? AND activation_func = ?
+    """, (model_name, ai.input_size, hidden_layer_sizes_str, ai.output_size, ai.activation_func_name))
+    config_id = cursor.fetchone()[0]
+
     connection.commit()
     connection.close()
 
     return config_id
+
+# Example usage of saving a model configuration
+# Assuming `ai` is an instance of ChessAI and model_name is provided
+# config_id = save_model_configuration(ai, "ChessAI_Model")
 def record_to_db(training_method, model_id, model_name, epoch=None, generation=None, best_loss=None, avg_loss=None, best_fitness=None, avg_fitness=None, elite_average_fitness=None):
     db_path = "chess_ai_training.db"
     conn = sqlite3.connect(db_path)
@@ -498,6 +496,29 @@ def load_chess_ai(model_path):
     model.eval()
     return model
 def open_training_window(ai):
+    connection = sqlite3.connect("chess_ai_training.db")
+    cursor = connection.cursor()
+
+    # Load default parameters from the default_parameters table
+    cursor.execute("""
+    SELECT * FROM default_parameters WHERE parameter_type = 'default'
+    """)
+    default_params = cursor.fetchone()
+    connection.close()
+
+    # Set default values based on the fetched parameters or use hardcoded defaults if not found
+    if default_params:
+        _, _, _, learning_rate, batch_size, epochs, mini_epoch_size, clip_value, population_size, mutation_rate, generations = default_params
+    else:
+        learning_rate = 0.001
+        batch_size = 32
+        epochs = 10
+        mini_epoch_size = 5
+        clip_value = 1.0
+        population_size = 10
+        mutation_rate = 0.05
+        generations = 100
+
     cuda_status = "Available" if torch.cuda.is_available() else "Not Available"
     layout = [
         [sg.Text('Training Configuration', font=('Helvetica', 16))],
@@ -537,19 +558,19 @@ def open_training_window(ai):
         [sg.Frame('Training Hyperparameters', [
             [sg.Text('Learning Rate',
                      tooltip="Adjust this to control how quickly the model learns. A lower value results in slower, more stable learning, while a higher value speeds up training."),
-             sg.InputText('0.001', key='-LEARNING-RATE-', size=(10, 1), enable_events=True)],
+             sg.InputText(str(learning_rate), key='-LEARNING-RATE-', size=(10, 1), enable_events=True)],
             [sg.Text('Batch Size',
                      tooltip="Defines how many samples are processed before updating model weights. Larger values increase memory use but can improve stability."),
-             sg.InputText('32', key='-BATCH-SIZE-', size=(10, 1), enable_events=True)],
+             sg.InputText(str(batch_size), key='-BATCH-SIZE-', size=(10, 1), enable_events=True)],
             [sg.Text('Epochs',
                      tooltip="The total number of complete passes through the dataset. Increasing this allows the model to learn more but may risk overfitting."),
-             sg.InputText('10', key='-EPOCHS-', size=(10, 1), enable_events=True)],
+             sg.InputText(str(epochs), key='-EPOCHS-', size=(10, 1), enable_events=True)],
             [sg.Text('Mini-Epoch Size',
                      tooltip="Defines the number of batches processed within each mini-epoch, providing early feedback and frequent checkpoints."),
-             sg.InputText('5', key='-MINI-EPOCH-SIZE-', size=(10, 1), enable_events=True)],
+             sg.InputText(str(mini_epoch_size), key='-MINI-EPOCH-SIZE-', size=(10, 1), enable_events=True)],
             [sg.Text('Gradient Clipping',
                      tooltip="Sets a maximum limit for gradients to prevent them from becoming too large and destabilizing training."),
-             sg.InputText('1.0', key='-GRADIENT-CLIP-', size=(10, 1), enable_events=True)]
+             sg.InputText(str(clip_value), key='-GRADIENT-CLIP-', size=(10, 1), enable_events=True)]
         ])],
 
         # Optimizer Settings Section
@@ -577,13 +598,13 @@ def open_training_window(ai):
                       key='-TRAINING-METHOD-', size=(15, 1))],
             [sg.Text('Population Size',
                      tooltip="Defines the number of individuals in each generation for the genetic algorithm. A larger population increases diversity but requires more computation."),
-             sg.InputText('10', key='-POPULATION-SIZE-', size=(10, 1), enable_events=True)],
+             sg.InputText(str(population_size), key='-POPULATION-SIZE-', size=(10, 1), enable_events=True)],
             [sg.Text('Mutation Rate',
                      tooltip="Determines the probability of mutation in the genetic algorithm. Higher rates add randomness; lower rates preserve inherited traits."),
-             sg.InputText('0.05', key='-MUTATION-RATE-', size=(10, 1), enable_events=True)],
+             sg.InputText(str(mutation_rate), key='-MUTATION-RATE-', size=(10, 1), enable_events=True)],
             [sg.Text('Generations',
                      tooltip="Specifies the maximum number of generations to run when using the genetic algorithm, controlling how long evolution continues."),
-             sg.InputText('100', key='-GENERATIONS-', size=(10, 1), enable_events=True)],
+             sg.InputText(str(generations), key='-GENERATIONS-', size=(10, 1), enable_events=True)],
             [sg.Checkbox('Use Early Stopping', key='-EARLY-STOPPING-', default=False,
                          tooltip="Stops training when no improvement is observed in validation loss after a set number of epochs.")]
         ])],
@@ -704,7 +725,7 @@ def open_training_window(ai):
 
 
     window.close()
-# Placeholder functions to customize training logic later
+
 def load_training_data(data_source, batch_size, normalize):
     dataset = ChessDataset(data_source, normalize=normalize)
     if len(dataset) == 0:
@@ -1145,6 +1166,9 @@ def open_neural_network_window(ai, model_path):
                     'model_state_dict': ai.state_dict(),
                     'activation_func': activation_func  # Save as string
                 }, model_path)
+
+                # Save model configuration to the database
+                save_model_configuration(ai, model_name)
 
                 # Reload the model configuration from the saved file
                 checkpoint = torch.load(model_path, weights_only=True)
