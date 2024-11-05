@@ -6,7 +6,7 @@ import sqlite3
 import subprocess
 import threading
 import time
-
+from datetime import datetime
 import PySimpleGUI as sg
 import pandas as pd
 import torch
@@ -15,6 +15,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 import multiprocessing
 import time
+import csv
 
 # Simple PyTorch Neural Network for Chess (Placeholder)
 class ChessAI(torch.nn.Module):
@@ -216,7 +217,7 @@ def save_model_configuration(model_name, device, learning_rate, batch_size, epoc
         model_name, device, learning_rate, batch_size, epochs, optimizer_type, weight_decay,
         loss_function, int(dropout_enabled), weight_init_method, training_method,
         int(use_early_stopping), data_source, int(use_engine_data),
-        datetime.datetime.now()
+        datetime.now()
     ))
 
     config_id = cursor.lastrowid
@@ -224,127 +225,197 @@ def save_model_configuration(model_name, device, learning_rate, batch_size, epoc
     connection.close()
 
     return config_id
-def record_to_db(action, timestamp=None, training_time="00:00:00", final_loss=0.0):
-    # Connect to the SQLite database
-    conn = sqlite3.connect("model_training.db")
+def record_to_db(training_method, model_id, model_name, epoch=None, generation=None, best_loss=None, avg_loss=None, best_fitness=None, avg_fitness=None, elite_average_fitness=None):
+    db_path = "chess_ai_training.db"
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Ensure we have a valid timestamp
-    if not timestamp:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Create table if it does not exist
+    # Create the model_training table if it does not exist
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS TrainingLog (
-            id INTEGER PRIMARY KEY,
-            action TEXT,
+        CREATE TABLE IF NOT EXISTS model_training (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_id INTEGER,
+            model_name TEXT,
+            training_method TEXT,
             timestamp TEXT,
-            training_time TEXT,
-            final_loss REAL
+            epoch INTEGER,
+            generation INTEGER,
+            best_loss REAL,
+            avg_loss REAL,
+            best_fitness REAL,
+            avg_fitness REAL,
+            elite_average_fitness REAL,
+            FOREIGN KEY(model_id) REFERENCES trained_models(model_id)
         )
     ''')
 
-    # Insert the log entry into the TrainingLog table
+    # Insert the training stats
     cursor.execute('''
-        INSERT INTO TrainingLog (action, timestamp, training_time, final_loss)
-        VALUES (?, ?, ?, ?)
-    ''', (action, timestamp, training_time, final_loss))
+        INSERT INTO model_training (model_id, model_name, training_method, timestamp, epoch, generation, best_loss, avg_loss, best_fitness, avg_fitness, elite_average_fitness)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (model_id, model_name, training_method, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), epoch, generation, best_loss, avg_loss, best_fitness, avg_fitness, elite_average_fitness))
 
-    # Commit the transaction and close the connection
     conn.commit()
     conn.close()
 
-    print(f"Recorded to database: Action={action}, Timestamp={timestamp}, Training Time={training_time}, Final Loss={final_loss}")
-# Log training session function
-def log_training_session(config_id, model_id, start_time, end_time, final_loss):
-    connection = sqlite3.connect("chess_ai_training.db")
-    cursor = connection.cursor()
 
-    training_duration = (end_time - start_time).total_seconds() / 3600.0  # duration in hours
+def log_training_session(start_time, end_time, training_method, performance_trend, model_id, model_name):
+    db_path = "chess_ai_training.db"
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
 
-    # Insert training session data
-    cursor.execute("""
-    INSERT INTO training_sessions (
-        config_id, model_id, start_time, end_time, training_duration, final_loss
-    ) VALUES (?, ?, ?, ?, ?, ?)
-    """, (config_id, model_id, start_time, end_time, training_duration, final_loss))
+    # Create the training_sessions table if it does not exist
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS training_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_id INTEGER,
+            model_name TEXT,
+            training_method TEXT,
+            start_time TEXT,
+            end_time TEXT,
+            duration REAL,
+            performance_trend TEXT,
+            FOREIGN KEY(model_id) REFERENCES trained_models(model_id)
+        )
+    ''')
 
-    # Update total training time in model_performance
-    cursor.execute("""
-    UPDATE model_performance
-    SET total_training_time = total_training_time + ?
-    WHERE model_id = ?
-    """, (training_duration, model_id))
+    duration = (end_time - start_time) / 60.0  # Duration in minutes
 
-    connection.commit()
-    connection.close()
+    # Insert the training duration and trend
+    cursor.execute('''
+        INSERT INTO training_sessions (model_id, model_name, training_method, start_time, end_time, duration, performance_trend)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (model_id, model_name, training_method, datetime.fromtimestamp(start_time).strftime("%Y-%m-%d %H:%M:%S"), datetime.fromtimestamp(end_time).strftime("%Y-%m-%d %H:%M:%S"), duration, performance_trend))
 
-# Save performance loss for history tracking
-def save_loss_history(model_id, epoch, loss):
-    connection = sqlite3.connect("chess_ai_training.db")
-    cursor = connection.cursor()
+    conn.commit()
+    conn.close()
 
-    # Insert loss history
-    cursor.execute("""
-    INSERT INTO loss_history (model_id, epoch, loss)
-    VALUES (?, ?, ?)
-    """, (model_id, epoch, loss))
 
-    # Update latest training loss in model_performance
-    cursor.execute("""
-    UPDATE model_performance
-    SET last_training_loss = ?
-    WHERE model_id = ?
-    """, (loss, model_id))
+def save_model_to_db(model_name, training_method, is_new=False):
+    db_path = "chess_ai_training.db"
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
 
-    connection.commit()
-    connection.close()
+    # Create the trained_models table if it does not exist
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS trained_models (
+            model_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_name TEXT,
+            date_first_added TEXT,
+            latest_update TEXT,
+            training_time REAL DEFAULT 0,
+            generation_count INTEGER DEFAULT 0
+        )
+    ''')
 
-# Add model to model_performance
-def add_model(model_name, dataset_used, engine_used):
-    connection = sqlite3.connect("chess_ai_training.db")
-    cursor = connection.cursor()
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    cursor.execute("""
-    INSERT INTO model_performance (model_name, dataset_used, engine_used)
-    VALUES (?, ?, ?)
-    """, (model_name, dataset_used, engine_used))
+    if is_new:
+        # Insert new model entry
+        cursor.execute('''
+            INSERT INTO trained_models (model_name, date_first_added, latest_update, training_time, generation_count)
+            VALUES (?, ?, ?, 0, 0)
+        ''', (model_name, current_time, current_time))
+    else:
+        # Update existing model entry
+        cursor.execute('''
+            UPDATE trained_models
+            SET latest_update = ?,
+                training_time = training_time + 1,
+                generation_count = generation_count + 1
+            WHERE model_name = ?
+        ''', (current_time, model_name))
 
+    conn.commit()
     model_id = cursor.lastrowid
-    connection.commit()
-    connection.close()
-
+    conn.close()
     return model_id
 
-# Example usage
-create_database()
 
-# Save a model configuration
-config_id = save_model_configuration(
-    model_name="ChessAI_Model_1",
-    device="GPU",
-    learning_rate=0.001,
-    batch_size=64,
-    epochs=10,
-    optimizer_type="Adam",
-    weight_decay=0.0001,
-    loss_function="MSELoss",
-    dropout_enabled=True,
-    weight_init_method="Xavier",
-    training_method="Supervised",
-    use_early_stopping=True,
-    data_source="custom_data.csv",
-    use_engine_data=False
-)
+def save_training_parameters_to_db(training_method, model_id, model_name, start_time, **kwargs):
+    db_path = "chess_ai_training.db"
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
 
-# Log a training session
-start_time = datetime.datetime.now()
-end_time = start_time + datetime.timedelta(hours=2)
-log_training_session(config_id=config_id, model_id=1, start_time=start_time, end_time=end_time, final_loss=0.05)
+    # Create the training_parameters table if it does not exist
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS training_parameters (
+            training_session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_id INTEGER,
+            model_name TEXT,
+            training_method TEXT,
+            start_time TEXT,
+            epochs INTEGER,
+            use_dropout BOOLEAN,
+            use_early_stopping BOOLEAN,
+            device TEXT,
+            model_path TEXT,
+            mini_epoch_size INTEGER,
+            clip_value REAL,
+            population_size INTEGER,
+            mutation_rate REAL,
+            generations INTEGER,
+            FOREIGN KEY(model_id) REFERENCES trained_models(model_id)
+        )
+    ''')
 
-# Save a loss history entry
-save_loss_history(model_id=1, epoch=1, loss=0.1)
-save_loss_history(model_id=1, epoch=2, loss=0.08)
+    # Insert the training parameters
+    cursor.execute('''
+        INSERT INTO training_parameters (model_id, model_name, training_method, start_time, epochs, use_dropout, use_early_stopping, device, model_path, mini_epoch_size, clip_value, population_size, mutation_rate, generations)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (model_id, model_name, training_method, datetime.fromtimestamp(start_time).strftime("%Y-%m-%d %H:%M:%S"), kwargs.get('epochs'), kwargs.get('use_dropout'), kwargs.get('use_early_stopping'), kwargs.get('device'), kwargs.get('model_path'), kwargs.get('mini_epoch_size'), kwargs.get('clip_value'), kwargs.get('population_size'), kwargs.get('mutation_rate'), kwargs.get('generations')))
+
+    save_default_training_parameters(training_method, **kwargs)
+
+    conn.commit()
+    conn.close()
+
+
+def save_default_training_parameters(training_method, **kwargs):
+    db_path = "chess_ai_training.db"
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Create the default_parameters table if it does not exist
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS default_parameters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            training_method TEXT,
+            parameter_type TEXT,
+            epochs INTEGER,
+            use_dropout BOOLEAN,
+            use_early_stopping BOOLEAN,
+            device TEXT,
+            model_path TEXT,
+            mini_epoch_size INTEGER,
+            clip_value REAL,
+            population_size INTEGER,
+            mutation_rate REAL,
+            generations INTEGER
+        )
+    ''')
+
+    # Check if default parameters exist, if not, insert them
+    cursor.execute('''
+        SELECT COUNT(*) FROM default_parameters WHERE parameter_type = 'default'
+    ''')
+    if cursor.fetchone()[0] == 0:
+        cursor.execute('''
+            INSERT INTO default_parameters (training_method, parameter_type, epochs, use_dropout, use_early_stopping, device, model_path, mini_epoch_size, clip_value, population_size, mutation_rate, generations)
+            VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (training_method, kwargs.get('epochs'), kwargs.get('use_dropout'), kwargs.get('use_early_stopping'), kwargs.get('device'), kwargs.get('model_path'), kwargs.get('mini_epoch_size'), kwargs.get('clip_value'), kwargs.get('population_size'), kwargs.get('mutation_rate'), kwargs.get('generations')))
+
+    # Update the latest parameters
+    cursor.execute('''
+        INSERT OR REPLACE INTO default_parameters (id, training_method, parameter_type, epochs, use_dropout, use_early_stopping, device, model_path, mini_epoch_size, clip_value, population_size, mutation_rate, generations)
+        VALUES ((SELECT id FROM default_parameters WHERE parameter_type = 'latest' LIMIT 1), ?, 'latest', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (training_method, kwargs.get('epochs'), kwargs.get('use_dropout'), kwargs.get('use_early_stopping'), kwargs.get('device'), kwargs.get('model_path'), kwargs.get('mini_epoch_size'), kwargs.get('clip_value'), kwargs.get('population_size'), kwargs.get('mutation_rate'), kwargs.get('generations')))
+
+    conn.commit()
+    conn.close()
+
+
+
 #=========================================================================================
 
 #=========================================================================================
@@ -524,7 +595,7 @@ def open_training_window(ai):
     ]
 
     window = sg.Window('Training Settings', layout)
-
+    stop_event = multiprocessing.Event()
     # Enforce numeric-only input on specific fields
     def numeric_input(event, key):
         if event in [key] and not values[event].replace('.', '', 1).isdigit():
@@ -542,7 +613,12 @@ def open_training_window(ai):
         numeric_input(event, '-POPULATION-SIZE-')
         numeric_input(event, '-MUTATION-RATE-')
 
-        if event == sg.WINDOW_CLOSED:
+        if event == sg.WINDOW_CLOSED or event == '-EXIT-':
+            if train_process is not None and train_process.is_alive():
+                print("Terminating training process before exit...")
+                stop_event.set()  # Set the stop event before terminating
+                train_process.terminate()
+                train_process.join()
             break
 
         elif event == '-START-TRAINING-':
@@ -597,27 +673,34 @@ def open_training_window(ai):
                 optimizer = get_optimizer(optimizer_type, ai, learning_rate, weight_decay)
                 criterion = get_loss_function(loss_function)
 
-
+                stop_event.clear()  # Clear stop event before starting new training
 
                 stop_training = False  # Reset stop flag at the beginning of each training
 
                 # starting the actual training process
-                train_thread = threading.Thread(
+                train_process = multiprocessing.Process(
                     target=threaded_training,
                     args=(
-                    ai, data_loader, optimizer, criterion, epochs, use_dropout, use_early_stopping, device, model_path,
-                    mini_epoch_size, clip_value, training_method, population_size, mutation_rate, generations),
+                        ai, data_loader, optimizer, criterion, epochs, use_dropout, use_early_stopping, device,
+                        model_path,
+                        mini_epoch_size, clip_value, training_method, population_size, mutation_rate, generations, stop_event
+                    ),
                     daemon=True
                 )
-                train_thread.start()
+
+                # Start the training process
+                train_process.start()
 
             except ValueError as ve:
                 print(f"Dataset error: {ve}")
             except Exception as e:
                 print(f"Unexpected error: {e}")
         if event == '-STOP-TRAINING-':
-            stop_training = True
-            print("Stop button pressed. Stopping training after current batch.")
+            if train_process is not None and train_process.is_alive():
+                print("Stop button pressed. Discarding last batch...")
+                stop_event.set()
+                train_process.terminate()
+                train_process.join()
 
 
     window.close()
@@ -678,23 +761,41 @@ def clone_model(original_model):
     cloned_model.load_state_dict(state_dict)
     return cloned_model
 def threaded_training(ai, data_loader, optimizer, criterion, epochs, use_dropout, use_early_stopping, device, model_path,
-                      mini_epoch_size, clip_value, training_method, population_size, mutation_rate, generations):
-    global stop_training
+                      mini_epoch_size, clip_value, training_method, population_size, mutation_rate, generations, stop_event, model_name):
+    # Prepare to write training performance data to a CSV file
+    start_time = time.time()
+    formatted_start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    logs_dir = "logs"
+    os.makedirs(logs_dir, exist_ok=True)
+
+    model_id = save_model_to_db(model_name, training_method, is_new=True)
+    save_training_parameters_to_db(training_method, model_id, model_name, start_time, epochs=epochs, use_dropout=use_dropout,
+                                   use_early_stopping=use_early_stopping, device=device, model_path=model_path, mini_epoch_size=mini_epoch_size,
+                                   clip_value=clip_value, population_size=population_size, mutation_rate=mutation_rate, generations=generations)
+
+    if training_method == 'Backpropagation':
+        log_file_path = os.path.join(logs_dir, f"training_performance_log_backpropagation_{formatted_start_time}.csv")
+        log_fields = ["epoch", "batch", "best_loss", "average_loss", "mini_epoch_average_loss", "total_loss"]
+    elif training_method == 'Genetic Algorithm':
+        log_file_path = os.path.join(logs_dir, f"training_performance_log_genetic_algorithm_{formatted_start_time}.csv")
+        log_fields = ["generation", "average_fitness", "best_fitness", "elite_average_fitness", "fitness_scores"]
+
+    # If the log file doesn't exist, create it and write the headers
+    if not os.path.exists(log_file_path):
+        with open(log_file_path, mode='w', newline='') as log_file:
+            writer = csv.writer(log_file)
+            writer.writerow(log_fields)
+
     ai.to(device)
     best_loss = float('inf')
     patience = 3
     no_improvement_epochs = 0
-    # Gradient clipping value
+    performance_trend = []
 
-    # Training loop based on the selected training method
     if training_method == 'Backpropagation':
         ai.train()
 
         for epoch in range(epochs):
-            if stop_training:
-                print("Training stopped by user.")
-                break
-
             total_loss = 0.0
             if use_dropout:
                 ai.train()  # Enable dropout
@@ -705,16 +806,16 @@ def threaded_training(ai, data_loader, optimizer, criterion, epochs, use_dropout
             mini_epoch_count = 0
             batch_counter = 0
 
-            # Standard backpropagation with mini-epoch handling
             for batch_idx, (board_tensors, evaluations) in enumerate(data_loader):
                 board_tensors, evaluations = board_tensors.to(device), evaluations.to(device)
-
+                if stop_event.is_set():
+                    print("Training stopped by user after current batch.")
+                    return
                 optimizer.zero_grad()
                 outputs = ai(board_tensors).squeeze(-1)
                 loss = criterion(outputs, evaluations)
                 loss.backward()
 
-                # Gradient Clipping
                 torch.nn.utils.clip_grad_norm_(ai.parameters(), clip_value)
                 optimizer.step()
 
@@ -723,24 +824,31 @@ def threaded_training(ai, data_loader, optimizer, criterion, epochs, use_dropout
                 batch_counter += 1
                 mini_epoch_count += 1
 
-                # Print progress every 10 batches
                 if batch_idx % 10 == 0:
                     print(f"Epoch [{epoch + 1}/{epochs}], Batch [{batch_idx + 1}/{len(data_loader)}], Loss: {loss.item():.4f}")
 
-                # Mini-epoch checkpoint
                 if mini_epoch_count >= mini_epoch_size:
                     avg_mini_epoch_loss = mini_epoch_loss / mini_epoch_count
                     print(f"Mini-epoch completed. Average Loss: {avg_mini_epoch_loss:.4f}")
-                    save_model(ai, model_path)  # Save model checkpoint
+                    save_model(ai, model_path)
+                    record_to_db(training_method, model_id, model_name, epoch=epoch + 1, best_loss=best_loss, avg_loss=avg_mini_epoch_loss)
+
+                    # Log mini-epoch data
+                    with open(log_file_path, mode='a', newline='') as log_file:
+                        writer = csv.writer(log_file)
+                        writer.writerow([epoch + 1, batch_idx + 1, None, None, avg_mini_epoch_loss, total_loss])
+
                     mini_epoch_loss = 0.0
                     mini_epoch_count = 0
 
             avg_loss = total_loss / batch_counter
+            performance_trend.append(avg_loss)
             print(f"Epoch {epoch + 1} completed. Average Loss: {avg_loss:.4f}")
 
             if avg_loss < best_loss:
                 best_loss = avg_loss
-                save_model(ai, model_path)  # Save best model
+                save_model(ai, model_path)
+                record_to_db(training_method, model_id, model_name, epoch=epoch + 1, best_loss=best_loss, avg_loss=avg_loss)
                 print(f"New best model saved with loss {best_loss:.4f}")
                 no_improvement_epochs = 0
             else:
@@ -750,83 +858,80 @@ def threaded_training(ai, data_loader, optimizer, criterion, epochs, use_dropout
                 print(f"Early stopping triggered. No improvement in last {patience} epochs.")
                 break
 
+            # Log data for each epoch
+            with open(log_file_path, mode='a', newline='') as log_file:
+                writer = csv.writer(log_file)
+                writer.writerow([epoch + 1, None, best_loss, avg_loss, None, total_loss])
+
         print("Backpropagation training complete.")
         print(f"Best model saved with loss: {best_loss:.4f} at '{model_path}'")
 
-
-
     elif training_method == 'Genetic Algorithm':
-
         print("Starting Genetic Algorithm Training")
 
         # Initialize the population and move each model to the specified device
-
         population = [clone_model(ai).to(device) for _ in range(population_size)]
 
         for generation in range(generations):
-
-            if stop_training:
+            if stop_event.is_set():
                 print("Training stopped by user.")
-
-                break
+                return
 
             fitness_scores = []
 
             for individual in population:
                 # Ensure each individual in the population is on the correct device
-
                 individual.to(device)
 
                 # Evaluate fitness using a small sample batch
-
                 sample_batch = next(iter(data_loader))
-
                 board_tensors, evaluations = sample_batch
-
                 board_tensors, evaluations = board_tensors.to(device), evaluations.to(device)
-
                 outputs = individual(board_tensors).squeeze(-1)
-
                 loss = criterion(outputs, evaluations)
-
                 fitness = -loss.item()  # Fitness is the negative loss for maximization purposes
-
                 fitness_scores.append(fitness)
 
             # Print the population size and fitness score count for debugging
-
             print(f"Population size: {len(population)}, Fitness scores count: {len(fitness_scores)}")
 
             if len(fitness_scores) == 0:
                 print("Error: No fitness scores calculated. Ending genetic algorithm training early.")
-
-                break
+                return
 
             # Selection of top individuals (elites) and reproduction
-
             elite_individuals = select_elite_individuals(population, fitness_scores, num_elites=2)
-
             population = generate_new_population(elite_individuals, population_size, mutation_rate)
-
-            # Move the population models to the correct device
-
             population = [ind.to(device) for ind in population]
 
             # Save the best individual of this generation
-
             best_fitness = max(fitness_scores)
-
             best_individual_idx = fitness_scores.index(best_fitness)
-
             best_individual = population[best_individual_idx]
-
             save_model(best_individual, model_path)
+            record_to_db(training_method, model_id, model_name, generation=generation + 1, best_fitness=best_fitness, avg_fitness=sum(fitness_scores) / len(fitness_scores), elite_average_fitness=sum(fitness_scores[:len(elite_individuals)]) / len(elite_individuals))
+
+            avg_fitness = sum(fitness_scores) / len(fitness_scores)
+            elite_average_fitness = sum(fitness_scores[:len(elite_individuals)]) / len(elite_individuals)  # Average fitness of elite individuals
+            performance_trend.append(avg_fitness)
 
             print(f"Best individual in generation {generation + 1} with fitness: {best_fitness}")
+            print(f"Average fitness in generation {generation + 1}: {avg_fitness}")
+            print(f"Elite average fitness in generation {generation + 1}: {elite_average_fitness}")
+
+            # Log data for each generation
+            with open(log_file_path, mode='a', newline='') as log_file:
+                writer = csv.writer(log_file)
+                writer.writerow([generation + 1, avg_fitness, best_fitness, elite_average_fitness, fitness_scores])
 
         print("Genetic Algorithm training complete.")
-
         print(f"Best model saved at '{model_path}'")
+
+    # Record training duration and performance trend
+    end_time = time.time()
+    trend_description = "improving" if performance_trend[-1] < performance_trend[0] else "declining"
+    log_training_session(start_time, end_time, training_method, trend_description, model_id, model_name)
+
 def board_to_tensor(fen):
     # Split the FEN string to extract the board position and active color
     parts = fen.split()
@@ -1065,129 +1170,134 @@ def open_neural_network_window(ai, model_path):
 #=============================================================================================================
 
 #===============================================================================================================
+
+if __name__ == '__main__':
+    create_database()
+
+
 # GUI layout
-layout = [
-    [sg.Text('Chess AI Configuration', font=('Helvetica', 16))],
-    [sg.Text('Load AI Model'), sg.InputText('', key='-MODEL-', size=(30, 1)),
-     sg.FileBrowse(file_types=(("Model Files", "*.pt"), ("All Files", "*.*")), key='-LOAD-BROWSE-')],
-    [sg.Button('Load Model', key='-LOAD-')],
-    [sg.Button('Create Model', key='-CREATE-')],
-    [sg.Button('Edit Model', key='-EDIT-')],
-    [sg.Text('Select Stockfish Engine'), sg.InputText('', key='-STOCKFISH-', size=(30, 1)),
-     sg.FileBrowse(file_types=(("Executable Files", "*.exe"), ("All Files", "*.*")), key='-STOCKFISH-BROWSE-')],
-    [sg.Button('Train', key='-TRAIN-')],
-    [sg.Button('Compile AI Model to Engine', key='-COMPILE-')],
-    [sg.Output(size=(60, 5), key='-MAIN-OUTPUT-')]
-]
+    layout = [
+        [sg.Text('Chess AI Configuration', font=('Helvetica', 16))],
+        [sg.Text('Load AI Model'), sg.InputText('', key='-MODEL-', size=(30, 1)),
+         sg.FileBrowse(file_types=(("Model Files", "*.pt"), ("All Files", "*.*")), key='-LOAD-BROWSE-')],
+        [sg.Button('Load Model', key='-LOAD-')],
+        [sg.Button('Create Model', key='-CREATE-')],
+        [sg.Button('Edit Model', key='-EDIT-')],
+        [sg.Text('Select Stockfish Engine'), sg.InputText('', key='-STOCKFISH-', size=(30, 1)),
+         sg.FileBrowse(file_types=(("Executable Files", "*.exe"), ("All Files", "*.*")), key='-STOCKFISH-BROWSE-')],
+        [sg.Button('Train', key='-TRAIN-')],
+        [sg.Button('Compile AI Model to Engine', key='-COMPILE-')],
+        [sg.Output(size=(60, 5), key='-MAIN-OUTPUT-')]
+    ]
 
-window = sg.Window('Chess AI Trainer', layout)
-models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
-os.makedirs(models_dir, exist_ok=True)
+    window = sg.Window('Chess AI Trainer', layout)
+    models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+    os.makedirs(models_dir, exist_ok=True)
 
-# Initialize variables
-ai = None
-optimizer = None
-engine_path = None
-default_learn_rate = 0.001
-stop_training = False
+    # Initialize variables
+    ai = None
+    optimizer = None
+    engine_path = None
+    default_learn_rate = 0.001
+    stop_training = False
 
-# Main event loop
-while True:
-    event, values = window.read()
+    # Main event loop
+    while True:
+        event, values = window.read()
 
-    if event == sg.WINDOW_CLOSED:
-        break
+        if event == sg.WINDOW_CLOSED:
+            break
 
-    # Load AI model
-    if event == '-LOAD-':
-        model_path = values['-MODEL-']
-        if model_path:
+        # Load AI model
+        if event == '-LOAD-':
+            model_path = values['-MODEL-']
+            if model_path:
+                try:
+                    # Specify weights_only=True to prevent the security warning
+                    checkpoint = torch.load(model_path, weights_only=True)
+                    ai = ChessAI()
+                    ai.configure_layers(checkpoint["model_state_dict"])
+                    ai.load_state_dict(checkpoint["model_state_dict"])
+                    optimizer = torch.optim.Adam(ai.parameters(), lr=default_learn_rate)
+
+                    # Load optimizer state if present
+                    if "optimizer_state_dict" in checkpoint:
+                        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+                    print(f"Model loaded successfully from {model_path}")
+                except Exception as e:
+                    sg.popup(f"Error loading model: {e}")
+
+        # Create new AI model and save to file
+        if event == '-CREATE-':
             try:
-                # Specify weights_only=True to prevent the security warning
-                checkpoint = torch.load(model_path, weights_only=True)
                 ai = ChessAI()
-                ai.configure_layers(checkpoint["model_state_dict"])
-                ai.load_state_dict(checkpoint["model_state_dict"])
                 optimizer = torch.optim.Adam(ai.parameters(), lr=default_learn_rate)
 
-                # Load optimizer state if present
-                if "optimizer_state_dict" in checkpoint:
-                    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+                # Prompt for filename and save the model
+                model_name = 'new_model.pt'
+                save_path = sg.popup_get_file(
+                    'Save Model As',
+                    save_as=True,
+                    default_path=model_name,
+                    initial_folder=models_dir,
+                    no_window=True,
+                    default_extension='.pt',
+                    file_types=(("Model Files", "*.pt"), ("All Files", "*.*"))
+                )
 
-                print(f"Model loaded successfully from {model_path}")
+                if save_path:
+                    # Ensure the file has the correct extension
+                    if not save_path.endswith('.pt'):
+                        save_path += '.pt'
+
+                    # Save the initial model state
+                    torch.save({
+                        "model_state_dict": ai.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict()
+                    }, save_path)
+                    sg.popup(f"New model '{model_name}' created and saved successfully to {save_path}")
+
+                    # Open the neural network configuration window after saving the model
+                    open_neural_network_window(ai, save_path)
+
             except Exception as e:
-                sg.popup(f"Error loading model: {e}")
+                sg.popup(f"Error creating or saving model: {e}")
 
-    # Create new AI model and save to file
-    if event == '-CREATE-':
-        try:
-            ai = ChessAI()
-            optimizer = torch.optim.Adam(ai.parameters(), lr=default_learn_rate)
+        # Open training window
+        if event == '-TRAIN-':
+            if ai is not None:
+                open_training_window(ai)
+            else:
+                sg.popup("Please load or create a model before training.")
 
-            # Prompt for filename and save the model
-            model_name = 'new_model.pt'
-            save_path = sg.popup_get_file(
-                'Save Model As',
-                save_as=True,
-                default_path=model_name,
-                initial_folder=models_dir,
-                no_window=True,
-                default_extension='.pt',
-                file_types=(("Model Files", "*.pt"), ("All Files", "*.*"))
-            )
+        # Set Stockfish engine path
+        if event == '-STOCKFISH-BROWSE-':
+            engine_path = values['-STOCKFISH-']
+            if engine_path:
+                sg.popup(f"Stockfish engine path set to: {engine_path}")
+            else:
+                sg.popup("Please select a valid Stockfish engine file.")
 
-            if save_path:
-                # Ensure the file has the correct extension
-                if not save_path.endswith('.pt'):
-                    save_path += '.pt'
+        # Compile AI model to a UCI-compatible engine
+        if event == '-COMPILE-':
+            model_path = values['-MODEL-']
+            if model_path:
+                output_name = sg.popup_get_text('Enter output file name (without extension):', default_text="chess_engine")
+                if output_name:
+                    compile_model_to_exe(model_path, output_name)
+                    sg.popup(f"Model compiled to {output_name}.exe")
+            else:
+                sg.popup("Please load a model before compiling.")
 
-                # Save the initial model state
-                torch.save({
-                    "model_state_dict": ai.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict()
-                }, save_path)
-                sg.popup(f"New model '{model_name}' created and saved successfully to {save_path}")
+        # Open Neural Network window for editing
+        if event == '-EDIT-':
+            model_path = values['-MODEL-']
+            if ai is not None and model_path:
+                open_neural_network_window(ai, model_path)
+            else:
+                sg.popup("Please load or create a model and specify a model path before editing.")
 
-                # Open the neural network configuration window after saving the model
-                open_neural_network_window(ai, save_path)
-
-        except Exception as e:
-            sg.popup(f"Error creating or saving model: {e}")
-
-    # Open training window
-    if event == '-TRAIN-':
-        if ai is not None:
-            open_training_window(ai)
-        else:
-            sg.popup("Please load or create a model before training.")
-
-    # Set Stockfish engine path
-    if event == '-STOCKFISH-BROWSE-':
-        engine_path = values['-STOCKFISH-']
-        if engine_path:
-            sg.popup(f"Stockfish engine path set to: {engine_path}")
-        else:
-            sg.popup("Please select a valid Stockfish engine file.")
-
-    # Compile AI model to a UCI-compatible engine
-    if event == '-COMPILE-':
-        model_path = values['-MODEL-']
-        if model_path:
-            output_name = sg.popup_get_text('Enter output file name (without extension):', default_text="chess_engine")
-            if output_name:
-                compile_model_to_exe(model_path, output_name)
-                sg.popup(f"Model compiled to {output_name}.exe")
-        else:
-            sg.popup("Please load a model before compiling.")
-
-    # Open Neural Network window for editing
-    if event == '-EDIT-':
-        model_path = values['-MODEL-']
-        if ai is not None and model_path:
-            open_neural_network_window(ai, model_path)
-        else:
-            sg.popup("Please load or create a model and specify a model path before editing.")
-
-window.close()
+    window.close()
 
 
