@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader, Dataset
 import multiprocessing
 import time
 import csv
+import warnings
 
 # Simple PyTorch Neural Network for Chess (Placeholder)
 class ChessAI(torch.nn.Module):
@@ -130,7 +131,7 @@ class ChessDataset(Dataset):
         return board_tensor, torch.tensor(evaluation, dtype=torch.float32)
 # Database setup
 def create_database():
-    connection = sqlite3.connect("chess_ai_training.db")
+    connection = sqlite3.connect("chess_ai_training.db", check_same_thread=False)
     cursor = connection.cursor()
 
     # Table for storing model configurations
@@ -175,6 +176,23 @@ def create_database():
         created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    cursor.execute('''
+            CREATE TABLE IF NOT EXISTS default_parameters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                training_method TEXT,
+                parameter_type TEXT,
+                epochs INTEGER,
+                use_dropout BOOLEAN,
+                use_early_stopping BOOLEAN,
+                device TEXT,
+                model_path TEXT,
+                mini_epoch_size INTEGER,
+                clip_value REAL,
+                population_size INTEGER,
+                mutation_rate REAL,
+                generations INTEGER
+            )
+            ''')
 
     # Table for tracking loss history
     cursor.execute("""
@@ -697,14 +715,14 @@ def open_training_window(ai):
                 stop_event.clear()  # Clear stop event before starting new training
 
                 stop_training = False  # Reset stop flag at the beginning of each training
-
+                train_model_name = os.path.basename(model_path)
                 # starting the actual training process
                 train_process = multiprocessing.Process(
                     target=threaded_training,
                     args=(
                         ai, data_loader, optimizer, criterion, epochs, use_dropout, use_early_stopping, device,
                         model_path,
-                        mini_epoch_size, clip_value, training_method, population_size, mutation_rate, generations, stop_event
+                        mini_epoch_size, clip_value, training_method, population_size, mutation_rate, generations, stop_event, train_model_name
                     ),
                     daemon=True
                 )
@@ -1196,6 +1214,8 @@ def open_neural_network_window(ai, model_path):
 #===============================================================================================================
 
 if __name__ == '__main__':
+    warnings.filterwarnings("ignore", category=DeprecationWarning,
+                            message="The default datetime adapter is deprecated.*")
     create_database()
 
 
