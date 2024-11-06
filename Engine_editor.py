@@ -808,9 +808,9 @@ def threaded_training(ai, data_loader, optimizer, criterion, epochs, use_dropout
     os.makedirs(logs_dir, exist_ok=True)
 
     model_id = save_model_to_db(model_name, training_method, is_new=True)
-    save_training_parameters_to_db(training_method, model_id, model_name, start_time, epochs=epochs, use_dropout=use_dropout,
-                                   use_early_stopping=use_early_stopping, device=device, model_path=model_path, mini_epoch_size=mini_epoch_size,
-                                   clip_value=clip_value, population_size=population_size, mutation_rate=mutation_rate, generations=generations)
+    # save_training_parameters_to_db(training_method, model_id, model_name, start_time, epochs=epochs, use_dropout=use_dropout,
+    #                               use_early_stopping=use_early_stopping, device=device, model_path=model_path, mini_epoch_size=mini_epoch_size,
+    #                               clip_value=clip_value, population_size=population_size, mutation_rate=mutation_rate, generations=generations)
 
     if training_method == 'Backpropagation':
         log_file_path = os.path.join(logs_dir, f"training_performance_log_backpropagation_{formatted_start_time}.csv")
